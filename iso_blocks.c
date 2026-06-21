@@ -1,0 +1,459 @@
+#include "pes.h"
+#include "pes.c"
+
+#define FB_W 640u
+#define FB_H 360u
+
+#define WORLD_X 128
+#define WORLD_Y 128
+#define WORLD_Z 32
+
+#define TILE_W  32
+#define TILE_H  16
+#define BLOCK_H 16
+
+#define FACE_SPRITE_MAX_W 40
+#define FACE_SPRITE_MAX_H 40
+
+#define MAX_BLOCKS        20000u
+#define MAX_VISIBLE_FACES (MAX_BLOCKS * 3u)
+#define SORT_KEY_MAX      ((WORLD_X + WORLD_Y + WORLD_Z + 4) * 4)
+
+typedef struct {
+    i32 x, y;
+} P2;
+
+typedef struct {
+    u8 color;
+} Voxel;
+
+typedef enum {
+    FACE_LEFT,
+    FACE_RIGHT,
+    FACE_TOP,
+} FaceKind;
+
+typedef struct {
+    i16 off_x;
+    i16 off_y;
+    u16 w;
+    u16 h;
+    u8* alpha;
+} FaceSprite;
+
+typedef struct {
+    i16 sx, sy;
+    i16 x, y, z;
+    u32 sort_key;
+    u8  color;
+    u8  face;
+} FaceInst;
+
+static Texture fb_tex;
+static Color   fb_pixels[FB_W * FB_H];
+
+static Voxel world[WORLD_Z][WORLD_Y][WORLD_X];
+static Color palette[256];
+
+static u8 top_alpha[FACE_SPRITE_MAX_W * FACE_SPRITE_MAX_H];
+static u8 left_alpha[FACE_SPRITE_MAX_W * FACE_SPRITE_MAX_H];
+static u8 right_alpha[FACE_SPRITE_MAX_W * FACE_SPRITE_MAX_H];
+
+static FaceSprite spr_top;
+static FaceSprite spr_left;
+static FaceSprite spr_right;
+
+static FaceInst faces[MAX_VISIBLE_FACES];
+static FaceInst faces_sorted[MAX_VISIBLE_FACES];
+static u32      faces_len;
+static u32      sort_counts[SORT_KEY_MAX];
+
+static i32 cam_x = (i32)FB_W / 2 + 200;
+static i32 cam_y = -160;
+
+static bool voxel_in_bounds(i32 x, i32 y, i32 z) {
+    return (u32)x < WORLD_X && (u32)y < WORLD_Y && (u32)z < WORLD_Z;
+}
+
+static bool voxel_exists(i32 x, i32 y, i32 z) {
+    return voxel_in_bounds(x, y, z) && world[z][y][x].color != 0;
+}
+
+static u8 voxel_color(i32 x, i32 y, i32 z) {
+    if (!voxel_in_bounds(x, y, z))
+        return 0;
+    return world[z][y][x].color;
+}
+
+static void voxel_set(i32 x, i32 y, i32 z, u8 color) {
+    if (voxel_in_bounds(x, y, z))
+        world[z][y][x].color = color;
+}
+
+static void voxel_clear(i32 x, i32 y, i32 z) {
+    if (voxel_in_bounds(x, y, z))
+        world[z][y][x].color = 0;
+}
+
+static P2 iso_project(i32 x, i32 y, i32 z, i32 cx, i32 cy) {
+    return (P2){
+        cx + (x - y) * (TILE_W / 2),
+        cy + (x + y) * (TILE_H / 2) - z * BLOCK_H,
+    };
+}
+
+static void init_palette(void) {
+    palette[1] = rgb(220, 80, 60);
+    palette[2] = rgb(80, 160, 240);
+    palette[3] = rgb(240, 210, 80);
+    palette[4] = rgb(90, 200, 110);
+    palette[5] = rgb(180, 120, 240);
+    palette[6] = rgb(120, 210, 210);
+    palette[7] = rgb(220, 140, 80);
+}
+
+static Color shade_face(Color c, FaceKind face) {
+    f32 m = face == FACE_TOP ? 1.10f : face == FACE_RIGHT ? 0.85f : 0.70f;
+    return rgba(
+        (u8)clamp((i32)((f32)c.r * m), 0, 255),
+        (u8)clamp((i32)((f32)c.g * m), 0, 255),
+        (u8)clamp((i32)((f32)c.b * m), 0, 255),
+        c.a);
+}
+
+static i32 edge(P2 a, P2 b, i32 x, i32 y) {
+    return (x - a.x) * (b.y - a.y) - (y - a.y) * (b.x - a.x);
+}
+
+static bool point_in_quad(P2* p, i32 x, i32 y) {
+    bool have_neg = false;
+    bool have_pos = false;
+
+    for (u32 i = 0; i < 4; i++) {
+        i32 e = edge(p[i], p[(i + 1) & 3u], x, y);
+        have_neg = have_neg || e < 0;
+        have_pos = have_pos || e > 0;
+    }
+
+    return !(have_neg && have_pos);
+}
+
+static void clear_face_alpha(FaceSprite* s) {
+    for (u32 i = 0; i < s->w * s->h; i++)
+        s->alpha[i] = 0;
+}
+
+static void fill_mask_quad(FaceSprite* s, P2 a, P2 b, P2 c, P2 d) {
+    P2 p[4] = { a, b, c, d };
+
+    clear_face_alpha(s);
+
+    for (u32 y = 0; y < s->h; y++) {
+        for (u32 x = 0; x < s->w; x++) {
+            i32 px = (i32)x;
+            i32 py = (i32)y;
+            if (point_in_quad(p, px, py))
+                s->alpha[y * s->w + x] = 255;
+        }
+    }
+}
+
+static void generate_face_masks(void) {
+    fill_mask_quad(
+        &spr_top,
+        (P2){ TILE_W / 2, 0 },
+        (P2){ TILE_W, TILE_H / 2 },
+        (P2){ TILE_W / 2, TILE_H },
+        (P2){ 0, TILE_H / 2 });
+
+    fill_mask_quad(
+        &spr_left,
+        (P2){ 0, 0 },
+        (P2){ TILE_W / 2, TILE_H / 2 },
+        (P2){ TILE_W / 2, TILE_H / 2 + BLOCK_H },
+        (P2){ 0, BLOCK_H });
+
+    fill_mask_quad(
+        &spr_right,
+        (P2){ TILE_W / 2, 0 },
+        (P2){ 0, TILE_H / 2 },
+        (P2){ 0, TILE_H / 2 + BLOCK_H },
+        (P2){ TILE_W / 2, BLOCK_H });
+}
+
+static void init_face_sprites(void) {
+    spr_top = (FaceSprite){
+        .off_x = -TILE_W / 2,
+        .off_y = 0,
+        .w = TILE_W + 1,
+        .h = TILE_H + 1,
+        .alpha = top_alpha,
+    };
+
+    spr_left = (FaceSprite){
+        .off_x = -TILE_W / 2,
+        .off_y = TILE_H / 2,
+        .w = TILE_W / 2 + 1,
+        .h = BLOCK_H + TILE_H / 2 + 1,
+        .alpha = left_alpha,
+    };
+
+    spr_right = (FaceSprite){
+        .off_x = 0,
+        .off_y = TILE_H / 2,
+        .w = TILE_W / 2 + 1,
+        .h = BLOCK_H + TILE_H / 2 + 1,
+        .alpha = right_alpha,
+    };
+
+    generate_face_masks();
+}
+
+static void init_test_world(void) {
+    for (i32 y = 16; y < 48; y++) {
+        for (i32 x = 16; x < 48; x++)
+            voxel_set(x, y, 0, 1);
+    }
+
+    for (i32 y = 18; y < 46; y++) {
+        for (i32 x = 18; x < 46; x++) {
+            if (((x * 17 + y * 31) & 15) < 3)
+                voxel_set(x, y, 1, 6);
+        }
+    }
+
+    for (i32 z = 1; z < 10; z++) {
+        voxel_set(24, 24, z, 2);
+        voxel_set(25, 24, z, 2);
+        voxel_set(24, 25, z, 2);
+        voxel_set(25, 25, z, 2);
+    }
+
+    for (i32 x = 20; x < 45; x++) {
+        for (i32 z = 1; z < 6; z++) {
+            voxel_set(x, 34, z, 3);
+        }
+    }
+    for (i32 x = 29; x <= 35; x++) {
+        for (i32 z = 1; z <= 3; z++)
+            voxel_clear(x, 34, z);
+    }
+
+    for (i32 x = 28; x < 45; x++) {
+        voxel_set(x, 26, 7, 4);
+        voxel_set(x, 27, 7, 4);
+    }
+
+    for (i32 z = 1; z < 7; z++) {
+        voxel_set(28, 26, z, 5);
+        voxel_set(28, 27, z, 5);
+        voxel_set(44, 26, z, 5);
+        voxel_set(44, 27, z, 5);
+    }
+
+    for (i32 y = 70; y < 114; y++) {
+        for (i32 x = 68; x < 126; x++) {
+            i32 h = 1 + ((x * 13 + y * 7) % 5);
+            voxel_set(x, y, 0, 7);
+            voxel_set(x, y, 1, 7);
+            if (h >= 3)
+                voxel_set(x, y, 2, (u8)(2 + (x + y) % 5));
+        }
+    }
+}
+
+static u32 face_sort_key(i32 x, i32 y, i32 z, FaceKind face) {
+    u32 face_order = face == FACE_LEFT ? 0u : face == FACE_RIGHT ? 1u : 2u;
+    return ((u32)(x + y + z) << 2) | face_order;
+}
+
+static void push_face(i32 x, i32 y, i32 z, FaceKind face, u8 color) {
+    if (faces_len >= MAX_VISIBLE_FACES)
+        return;
+
+    P2 p = iso_project(x, y, z, cam_x, cam_y);
+    faces[faces_len++] = (FaceInst){
+        .sx = (i16)p.x,
+        .sy = (i16)p.y,
+        .x = (i16)x,
+        .y = (i16)y,
+        .z = (i16)z,
+        .sort_key = face_sort_key(x, y, z, face),
+        .color = color,
+        .face = (u8)face,
+    };
+}
+
+static void emit_visible_faces_for_voxel(i32 x, i32 y, i32 z) {
+    u8 color = voxel_color(x, y, z);
+    if (!color)
+        return;
+
+    if (!voxel_exists(x, y, z + 1))
+        push_face(x, y, z, FACE_TOP, color);
+
+    if (!voxel_exists(x, y + 1, z))
+        push_face(x, y, z, FACE_LEFT, color);
+
+    if (!voxel_exists(x + 1, y, z))
+        push_face(x, y, z, FACE_RIGHT, color);
+}
+
+static void build_face_list(void) {
+    faces_len = 0;
+
+    for (i32 z = 0; z < WORLD_Z; z++) {
+        for (i32 y = 0; y < WORLD_Y; y++) {
+            for (i32 x = 0; x < WORLD_X; x++) {
+                if (voxel_exists(x, y, z))
+                    emit_visible_faces_for_voxel(x, y, z);
+            }
+        }
+    }
+}
+
+static void sort_faces_counting(void) {
+    for (u32 i = 0; i < SORT_KEY_MAX; i++)
+        sort_counts[i] = 0;
+
+    for (u32 i = 0; i < faces_len; i++)
+        sort_counts[faces[i].sort_key]++;
+
+    u32 total = 0;
+    for (u32 i = 0; i < SORT_KEY_MAX; i++) {
+        u32 count = sort_counts[i];
+        sort_counts[i] = total;
+        total += count;
+    }
+
+    for (u32 i = 0; i < faces_len; i++) {
+        u32 dst = sort_counts[faces[i].sort_key]++;
+        faces_sorted[dst] = faces[i];
+    }
+}
+
+static void clear_fb(Color c) {
+    for (u32 i = 0; i < FB_W * FB_H; i++)
+        fb_pixels[i] = c;
+}
+
+static bool face_sprite_offscreen(const FaceSprite* s, i32 sx, i32 sy) {
+    i32 x0 = sx + s->off_x;
+    i32 y0 = sy + s->off_y;
+    i32 x1 = x0 + s->w;
+    i32 y1 = y0 + s->h;
+
+    return x1 < 0 || y1 < 0 || x0 >= (i32)FB_W || y0 >= (i32)FB_H;
+}
+
+static void blit_face(const FaceSprite* s, i32 sx, i32 sy, Color color) {
+    i32 dst_x0 = sx + s->off_x;
+    i32 dst_y0 = sy + s->off_y;
+
+    for (u32 y = 0; y < s->h; y++) {
+        i32 dy = dst_y0 + (i32)y;
+        if ((u32)dy >= FB_H)
+            continue;
+
+        const u8* src = s->alpha + y * s->w;
+        Color*    dst = fb_pixels + dy * FB_W;
+
+        for (u32 x = 0; x < s->w; x++) {
+            if (!src[x])
+                continue;
+
+            i32 dx = dst_x0 + (i32)x;
+            if ((u32)dx >= FB_W)
+                continue;
+
+            dst[dx] = color;
+        }
+    }
+}
+
+static const FaceSprite* sprite_for_face(FaceKind face) {
+    switch (face) {
+        case FACE_LEFT:  return &spr_left;
+        case FACE_RIGHT: return &spr_right;
+        case FACE_TOP:   return &spr_top;
+    }
+    return &spr_top;
+}
+
+static void render_faces(void) {
+    for (u32 i = 0; i < faces_len; i++) {
+        FaceInst*         f = &faces_sorted[i];
+        FaceKind          face = (FaceKind)f->face;
+        const FaceSprite* s = sprite_for_face(face);
+
+        if (face_sprite_offscreen(s, f->sx, f->sy))
+            continue;
+
+        blit_face(s, f->sx, f->sy, shade_face(palette[f->color], face));
+    }
+}
+
+static void render_game(void) {
+    clear_fb(rgb(130, 30, 30));
+    build_face_list();
+    sort_faces_counting();
+    render_faces();
+}
+
+static bool update_camera(f32 dt) {
+    i32 speed = (i32)(300.0f * dt);
+    if (speed < 1)
+        speed = 1;
+
+    bool changed = false;
+
+    if (key_held(Key_Left)) {
+        cam_x += speed;
+        changed = true;
+    }
+    if (key_held(Key_Right)) {
+        cam_x -= speed;
+        changed = true;
+    }
+    if (key_held(Key_Up)) {
+        cam_y += speed;
+        changed = true;
+    }
+    if (key_held(Key_Down)) {
+        cam_y -= speed;
+        changed = true;
+    }
+
+    return changed;
+}
+
+static bool update_game(f32 dt) {
+    return update_camera(dt);
+}
+
+void main(void) {
+    pes_init("Iso Blocks", FB_W * 2.0f, FB_H * 2.0f, rgb(30, 30, 30));
+    fb_tex = texture_create(FB_W, FB_H, Texture_STREAMING | Texture_NO_FILTER);
+
+    init_palette();
+    init_face_sprites();
+    init_test_world();
+
+    f32 dt;
+    while (pes_poll(&dt)) {
+        // update
+        bool changed = update_game(dt);
+        if (changed || (pes.events & EV_RESIZE)) {
+            // render
+            render_game();
+            texture_write(fb_tex, 0, 0, FB_W, FB_H, fb_pixels);
+
+            // present
+            f32 w = FB_W * 2.0f;
+            f32 h = FB_H * 2.0f;
+            f32 x = (pes.screen.width - w) * 0.5f;
+            f32 y = (pes.screen.height - h) * 0.5f;
+            draw_texture(x, y, w, h, fb_tex);
+        }
+    }
+}
