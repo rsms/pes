@@ -4,9 +4,13 @@
 #define FB_W 640u
 #define FB_H 360u
 
-#define WORLD_X 128
-#define WORLD_Y 128
-#define WORLD_Z 32
+#define WORLD_X          128
+#define WORLD_Y          128
+#define WORLD_Z          32
+#define WORLD_CELL_COUNT ((u32)WORLD_X * (u32)WORLD_Y * (u32)WORLD_Z)
+#define VOXEL_COLOR_BITS 6u
+#define VOXEL_COLOR_MASK ((1u << VOXEL_COLOR_BITS) - 1u)
+#define WORLD_BYTE_COUNT ((WORLD_CELL_COUNT * VOXEL_COLOR_BITS + 7u) / 8u)
 
 _Static_assert(WORLD_X <= 256, "FaceInst x requires WORLD_X <= 256");
 _Static_assert(WORLD_Y <= 256, "FaceInst y requires WORLD_Y <= 256");
@@ -26,13 +30,12 @@ _Static_assert(WORLD_Z <= 256, "FaceInst z requires WORLD_Z <= 256");
 #define FACE_MASK         ((1u << FACE_BITS) - 1u)
 #define PALETTE_COLOR_MAX 64u
 
+_Static_assert(
+    PALETTE_COLOR_MAX <= 1u << VOXEL_COLOR_BITS, "voxel palette does not fit in packed world");
+
 typedef struct {
     i32 x, y;
 } P2;
-
-typedef struct {
-    u8 color;
-} Voxel;
 
 typedef enum {
     FACE_LEFT,
@@ -60,7 +63,7 @@ typedef struct {
 static Texture fb_tex;
 static Color   fb_pixels[FB_W * FB_H];
 
-static Voxel world[WORLD_Z][WORLD_Y][WORLD_X];
+static u8    world[WORLD_BYTE_COUNT];
 static Color palette[PALETTE_COLOR_MAX];
 
 static u8 top_alpha[FACE_SPRITE_MAX_W * FACE_SPRITE_MAX_H];
@@ -81,14 +84,47 @@ static bool voxel_in_bounds(i32 x, i32 y, i32 z) {
     return (u32)x < WORLD_X && (u32)y < WORLD_Y && (u32)z < WORLD_Z;
 }
 
+static u32 voxel_index(i32 x, i32 y, i32 z) {
+    return ((u32)z * WORLD_Y + (u32)y) * WORLD_X + (u32)x;
+}
+
+static u8 voxel_read_at(u32 index) {
+    u32 bit_index = index * VOXEL_COLOR_BITS;
+    u32 byte_index = bit_index >> 3;
+    u32 shift = bit_index & 7u;
+    u32 value = (u32)world[byte_index] >> shift;
+
+    if (shift > 8u - VOXEL_COLOR_BITS)
+        value |= (u32)world[byte_index + 1u] << (8u - shift);
+
+    return (u8)(value & VOXEL_COLOR_MASK);
+}
+
+static void voxel_write_at(u32 index, u8 color) {
+    u32 bit_index = index * VOXEL_COLOR_BITS;
+    u32 byte_index = bit_index >> 3;
+    u32 shift = bit_index & 7u;
+    u32 mask = VOXEL_COLOR_MASK << shift;
+    u32 value = (u32)world[byte_index];
+
+    if (shift > 8u - VOXEL_COLOR_BITS)
+        value |= (u32)world[byte_index + 1u] << 8u;
+
+    value = (value & ~mask) | ((u32)color << shift);
+    world[byte_index] = (u8)value;
+
+    if (shift > 8u - VOXEL_COLOR_BITS)
+        world[byte_index + 1u] = (u8)(value >> 8u);
+}
+
 static bool voxel_exists(i32 x, i32 y, i32 z) {
-    return voxel_in_bounds(x, y, z) && world[z][y][x].color != 0;
+    return voxel_in_bounds(x, y, z) && voxel_read_at(voxel_index(x, y, z)) != 0;
 }
 
 static u8 voxel_color(i32 x, i32 y, i32 z) {
     if (!voxel_in_bounds(x, y, z))
         return 0;
-    return world[z][y][x].color;
+    return voxel_read_at(voxel_index(x, y, z));
 }
 
 static void voxel_set(i32 x, i32 y, i32 z, u8 color) {
@@ -98,12 +134,12 @@ static void voxel_set(i32 x, i32 y, i32 z, u8 color) {
         color,
         PALETTE_COLOR_MAX);
     if (voxel_in_bounds(x, y, z))
-        world[z][y][x].color = color;
+        voxel_write_at(voxel_index(x, y, z), color);
 }
 
 static void voxel_clear(i32 x, i32 y, i32 z) {
     if (voxel_in_bounds(x, y, z))
-        world[z][y][x].color = 0;
+        voxel_write_at(voxel_index(x, y, z), 0);
 }
 
 static P2 iso_project(i32 x, i32 y, i32 z, i32 cx, i32 cy) {
@@ -111,16 +147,6 @@ static P2 iso_project(i32 x, i32 y, i32 z, i32 cx, i32 cy) {
         cx + (x - y) * (TILE_W / 2),
         cy + (x + y) * (TILE_H / 2) - z * BLOCK_H,
     };
-}
-
-static void init_palette(void) {
-    palette[1] = rgb(220, 80, 60);
-    palette[2] = rgb(80, 160, 240);
-    palette[3] = rgb(240, 210, 80);
-    palette[4] = rgb(90, 200, 110);
-    palette[5] = rgb(180, 120, 240);
-    palette[6] = rgb(120, 210, 210);
-    palette[7] = rgb(220, 140, 80);
 }
 
 static Color shade_face(Color c, FaceKind face) {
@@ -218,6 +244,16 @@ static void init_face_sprites(void) {
     };
 
     generate_face_masks();
+}
+
+static void init_palette(void) {
+    palette[1] = rgb(220, 80, 60);
+    palette[2] = rgb(80, 160, 240);
+    palette[3] = rgb(240, 210, 80);
+    palette[4] = rgb(90, 200, 110);
+    palette[5] = rgb(180, 120, 240);
+    palette[6] = rgb(120, 210, 210);
+    palette[7] = rgb(220, 140, 80);
 }
 
 static void init_test_world(void) {
