@@ -22,12 +22,12 @@ END
 game=$1
 game_name=$(basename $game .c)
 
-if [ -z "$pb_app" ]; then
+if [ -z "${pb_app:-}" ]; then
     pb_app=$HOME/playbit/engine/_build/macos-aarch64-debug/Playbit.app
     [ -x "$pb_app/Contents/MacOS/Playbit" ] || pb_app=/Applications/Playbit.app
 fi
 
-if [ -z "$pb" ]; then
+if [ -z "${pb:-}" ]; then
     pb=$HOME/playbit/engine/pb
     [ -x "$pb" ] || pb=$pb_app/Contents/SharedSupport/bin/pb
 fi
