@@ -20,6 +20,9 @@ _Static_assert(WORLD_Z <= 256, "FaceInst z requires WORLD_Z <= 256");
 #define TILE_H  16
 #define BLOCK_H 16
 
+// Inline alpha-mask capacity for each FaceSprite. Current masks are at most
+// TILE_W + 1 wide and BLOCK_H + TILE_H / 2 + 1 tall; 40 leaves room for edge
+// pixels and small alignment tweaks without changing FaceSprite layout.
 #define FACE_SPRITE_MAX_W 40
 #define FACE_SPRITE_MAX_H 40
 
@@ -50,7 +53,7 @@ typedef struct {
     i16 off_y;
     u16 w;
     u16 h;
-    u8* alpha;
+    u8  alpha[FACE_SPRITE_MAX_W * FACE_SPRITE_MAX_H];
 } FaceSprite;
 
 typedef struct {
@@ -65,10 +68,6 @@ static Color   fb_pixels[FB_W * FB_H];
 
 static u8    world[WORLD_BYTE_COUNT];
 static Color palette[PALETTE_COLOR_MAX];
-
-static u8 top_alpha[FACE_SPRITE_MAX_W * FACE_SPRITE_MAX_H];
-static u8 left_alpha[FACE_SPRITE_MAX_W * FACE_SPRITE_MAX_H];
-static u8 right_alpha[FACE_SPRITE_MAX_W * FACE_SPRITE_MAX_H];
 
 static FaceSprite spr_top, spr_left, spr_right; // buffers
 
@@ -175,27 +174,30 @@ static bool point_in_quad(P2* p, i32 x, i32 y) {
     return !(have_neg && have_pos);
 }
 
-static void clear_face_alpha(FaceSprite* s) {
-    for (u32 i = 0; i < s->w * s->h; i++)
-        s->alpha[i] = 0;
-}
-
 static void fill_mask_quad(FaceSprite* s, P2 a, P2 b, P2 c, P2 d) {
     P2 p[4] = { a, b, c, d };
-
-    clear_face_alpha(s);
-
-    for (u32 y = 0; y < s->h; y++) {
-        for (u32 x = 0; x < s->w; x++) {
-            i32 px = (i32)x;
-            i32 py = (i32)y;
-            if (point_in_quad(p, px, py))
-                s->alpha[y * s->w + x] = 255;
-        }
+    for (i32 y = 0, w = (i32)s->w, h = (i32)s->h; y < h; y++) {
+        for (i32 x = 0; x < w; x++)
+            s->alpha[y * w + x] = 255 * (u8)point_in_quad(p, x, y);
     }
 }
 
-static void generate_face_masks(void) {
+static void init_face_sprites(void) {
+    spr_top.off_x = -TILE_W / 2;
+    spr_top.off_y = 0;
+    spr_top.w = TILE_W + 1;
+    spr_top.h = TILE_H + 1;
+
+    spr_left.off_x = -TILE_W / 2;
+    spr_left.off_y = TILE_H / 2;
+    spr_left.w = TILE_W / 2 + 1;
+    spr_left.h = BLOCK_H + TILE_H / 2 + 1;
+
+    spr_right.off_x = 0;
+    spr_right.off_y = TILE_H / 2;
+    spr_right.w = TILE_W / 2 + 1;
+    spr_right.h = BLOCK_H + TILE_H / 2 + 1;
+
     fill_mask_quad(
         &spr_top,
         (P2){ TILE_W / 2, 0 },
@@ -216,34 +218,6 @@ static void generate_face_masks(void) {
         (P2){ 0, TILE_H / 2 },
         (P2){ 0, TILE_H / 2 + BLOCK_H },
         (P2){ TILE_W / 2, BLOCK_H });
-}
-
-static void init_face_sprites(void) {
-    spr_top = (FaceSprite){
-        .off_x = -TILE_W / 2,
-        .off_y = 0,
-        .w = TILE_W + 1,
-        .h = TILE_H + 1,
-        .alpha = top_alpha,
-    };
-
-    spr_left = (FaceSprite){
-        .off_x = -TILE_W / 2,
-        .off_y = TILE_H / 2,
-        .w = TILE_W / 2 + 1,
-        .h = BLOCK_H + TILE_H / 2 + 1,
-        .alpha = left_alpha,
-    };
-
-    spr_right = (FaceSprite){
-        .off_x = 0,
-        .off_y = TILE_H / 2,
-        .w = TILE_W / 2 + 1,
-        .h = BLOCK_H + TILE_H / 2 + 1,
-        .alpha = right_alpha,
-    };
-
-    generate_face_masks();
 }
 
 static void init_palette(void) {
