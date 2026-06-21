@@ -1,8 +1,9 @@
 #include "pes.h"
 #include "pes.c"
 
-#define FB_W 640u
-#define FB_H 360u
+// initial window size
+#define WINDOW_W_DP 512.0f
+#define WINDOW_H_DP 512.0f
 
 #define WORLD_X          128
 #define WORLD_Y          128
@@ -16,15 +17,9 @@ _Static_assert(WORLD_X <= 256, "FaceInst x requires WORLD_X <= 256");
 _Static_assert(WORLD_Y <= 256, "FaceInst y requires WORLD_Y <= 256");
 _Static_assert(WORLD_Z <= 256, "FaceInst z requires WORLD_Z <= 256");
 
-#define TILE_W  32
-#define TILE_H  16
-#define BLOCK_H 16
-
-// Inline alpha-mask capacity for each FaceSprite. Current masks are at most
-// TILE_W + 1 wide and BLOCK_H + TILE_H / 2 + 1 tall; 40 leaves room for edge
-// pixels and small alignment tweaks without changing FaceSprite layout.
-#define FACE_SPRITE_MAX_W 40
-#define FACE_SPRITE_MAX_H 40
+#define TILE_W_DP  32.0f
+#define TILE_H_DP  16.0f
+#define BLOCK_H_DP 20.0f
 
 #define MAX_BLOCKS        20000u
 #define MAX_VISIBLE_FACES (MAX_BLOCKS * 3u)
@@ -53,7 +48,8 @@ typedef struct {
     i16 off_y;
     u16 w;
     u16 h;
-    u8  alpha[FACE_SPRITE_MAX_W * FACE_SPRITE_MAX_H];
+    u32 alpha_cap;
+    u8* alpha;
 } FaceSprite;
 
 typedef struct {
@@ -64,7 +60,10 @@ typedef struct {
 } FaceInst;
 
 static Texture fb_tex;
-static Color   fb_pixels[FB_W * FB_H];
+static Color*  fb_pixels;
+static u32     fb_w;
+static u32     fb_h;
+static f32     fb_scale;
 
 static u8    world[WORLD_BYTE_COUNT];
 static Color palette[PALETTE_COLOR_MAX];
@@ -76,8 +75,11 @@ static FaceInst faces_sorted[MAX_VISIBLE_FACES];
 static u32      faces_len;
 static u32      sort_counts[SORT_KEY_MAX];
 
-static i32 cam_x = (i32)FB_W / 2 + 200;
-static i32 cam_y = -160;
+static f32 cam_x_dp = WINDOW_W_DP * 0.5f + 100.0f;
+static f32 cam_y_dp = -80.0f;
+static u32 tile_w;
+static u32 tile_h;
+static u32 block_h;
 
 static bool voxel_in_bounds(i32 x, i32 y, i32 z) {
     return (u32)x < WORLD_X && (u32)y < WORLD_Y && (u32)z < WORLD_Z;
@@ -141,10 +143,12 @@ static void voxel_clear(i32 x, i32 y, i32 z) {
         voxel_write_at(voxel_index(x, y, z), 0);
 }
 
-static P2 iso_project(i32 x, i32 y, i32 z, i32 cx, i32 cy) {
+static P2 iso_project(i32 x, i32 y, i32 z) {
+    i32 cx = (i32)px_of_dp(cam_x_dp);
+    i32 cy = (i32)px_of_dp(cam_y_dp);
     return (P2){
-        cx + (x - y) * (TILE_W / 2),
-        cy + (x + y) * (TILE_H / 2) - z * BLOCK_H,
+        cx + (x - y) * (i32)(tile_w / 2),
+        cy + (x + y) * (i32)(tile_h / 2) - z * (i32)block_h,
     };
 }
 
@@ -182,42 +186,51 @@ static void fill_mask_quad(FaceSprite* s, P2 a, P2 b, P2 c, P2 d) {
     }
 }
 
+static void resize_face_sprite(FaceSprite* s, i32 off_x, i32 off_y, u32 w, u32 h) {
+    u32 alpha_cap = w * h;
+    if (s->alpha_cap < alpha_cap) {
+        s->alpha = PBMemRealloc(kPBMemGPA, s->alpha, alpha_cap);
+        assertf(s->alpha, "cannot allocate face sprite alpha (%u B)", alpha_cap);
+        s->alpha_cap = alpha_cap;
+    }
+    s->off_x = (i16)off_x;
+    s->off_y = (i16)off_y;
+    s->w = (u16)w;
+    s->h = (u16)h;
+}
+
 static void init_face_sprites(void) {
-    spr_top.off_x = -TILE_W / 2;
-    spr_top.off_y = 0;
-    spr_top.w = TILE_W + 1;
-    spr_top.h = TILE_H + 1;
+    tile_w = (u32)px_of_dp(TILE_W_DP);
+    tile_h = (u32)px_of_dp(TILE_H_DP);
+    block_h = (u32)px_of_dp(BLOCK_H_DP);
 
-    spr_left.off_x = -TILE_W / 2;
-    spr_left.off_y = TILE_H / 2;
-    spr_left.w = TILE_W / 2 + 1;
-    spr_left.h = BLOCK_H + TILE_H / 2 + 1;
+    assertf(tile_w >= 2 && tile_h >= 2 && block_h >= 1, "invalid block pixel size");
 
-    spr_right.off_x = 0;
-    spr_right.off_y = TILE_H / 2;
-    spr_right.w = TILE_W / 2 + 1;
-    spr_right.h = BLOCK_H + TILE_H / 2 + 1;
+    resize_face_sprite(&spr_top, -(i32)tile_w / 2, 0, tile_w + 1, tile_h + 1);
+    resize_face_sprite(
+        &spr_left, -(i32)tile_w / 2, (i32)tile_h / 2, tile_w / 2 + 1, block_h + tile_h / 2 + 1);
+    resize_face_sprite(&spr_right, 0, (i32)tile_h / 2, tile_w / 2 + 1, block_h + tile_h / 2 + 1);
 
     fill_mask_quad(
         &spr_top,
-        (P2){ TILE_W / 2, 0 },
-        (P2){ TILE_W, TILE_H / 2 },
-        (P2){ TILE_W / 2, TILE_H },
-        (P2){ 0, TILE_H / 2 });
+        (P2){ (i32)tile_w / 2, 0 },
+        (P2){ (i32)tile_w, (i32)tile_h / 2 },
+        (P2){ (i32)tile_w / 2, (i32)tile_h },
+        (P2){ 0, (i32)tile_h / 2 });
 
     fill_mask_quad(
         &spr_left,
         (P2){ 0, 0 },
-        (P2){ TILE_W / 2, TILE_H / 2 },
-        (P2){ TILE_W / 2, TILE_H / 2 + BLOCK_H },
-        (P2){ 0, BLOCK_H });
+        (P2){ (i32)tile_w / 2, (i32)tile_h / 2 },
+        (P2){ (i32)tile_w / 2, (i32)(tile_h / 2 + block_h) },
+        (P2){ 0, (i32)block_h });
 
     fill_mask_quad(
         &spr_right,
-        (P2){ TILE_W / 2, 0 },
-        (P2){ 0, TILE_H / 2 },
-        (P2){ 0, TILE_H / 2 + BLOCK_H },
-        (P2){ TILE_W / 2, BLOCK_H });
+        (P2){ (i32)tile_w / 2, 0 },
+        (P2){ 0, (i32)tile_h / 2 },
+        (P2){ 0, (i32)(tile_h / 2 + block_h) },
+        (P2){ (i32)tile_w / 2, (i32)block_h });
 }
 
 static void init_palette(void) {
@@ -310,7 +323,7 @@ static void push_face(i32 x, i32 y, i32 z, FaceKind face, u8 color) {
     if (faces_len >= MAX_VISIBLE_FACES)
         return;
 
-    P2 p = iso_project(x, y, z, cam_x, cam_y);
+    P2 p = iso_project(x, y, z);
     faces[faces_len++] = (FaceInst){
         .sx = (i16)p.x,
         .sy = (i16)p.y,
@@ -371,7 +384,7 @@ static void sort_faces_counting(void) {
 }
 
 static void clear_fb(Color c) {
-    for (u32 i = 0; i < FB_W * FB_H; i++)
+    for (u32 i = 0; i < fb_w * fb_h; i++)
         fb_pixels[i] = c;
 }
 
@@ -381,7 +394,7 @@ static bool face_sprite_offscreen(const FaceSprite* s, i32 sx, i32 sy) {
     i32 x1 = x0 + s->w;
     i32 y1 = y0 + s->h;
 
-    return x1 < 0 || y1 < 0 || x0 >= (i32)FB_W || y0 >= (i32)FB_H;
+    return x1 < 0 || y1 < 0 || x0 >= (i32)fb_w || y0 >= (i32)fb_h;
 }
 
 static void blit_face(const FaceSprite* s, i32 sx, i32 sy, Color color) {
@@ -390,18 +403,18 @@ static void blit_face(const FaceSprite* s, i32 sx, i32 sy, Color color) {
 
     for (u32 y = 0; y < s->h; y++) {
         i32 dy = dst_y0 + (i32)y;
-        if ((u32)dy >= FB_H)
+        if ((u32)dy >= fb_h)
             continue;
 
         const u8* src = s->alpha + y * s->w;
-        Color*    dst = fb_pixels + dy * FB_W;
+        Color*    dst = fb_pixels + dy * fb_w;
 
         for (u32 x = 0; x < s->w; x++) {
             if (!src[x])
                 continue;
 
             i32 dx = dst_x0 + (i32)x;
-            if ((u32)dx >= FB_W)
+            if ((u32)dx >= fb_w)
                 continue;
 
             dst[dx] = color;
@@ -438,27 +451,49 @@ static void render_game(void) {
     render_faces();
 }
 
+static void resize_framebuffer(void) {
+    u32 next_w = (u32)px_of_dp(pes.screen.width);
+    u32 next_h = (u32)px_of_dp(pes.screen.height);
+    assertf(next_w > 0 && next_h > 0, "invalid framebuffer size %u x %u", next_w, next_h);
+
+    if (fb_w != next_w || fb_h != next_h) {
+        if (fb_tex.handle)
+            texture_close(fb_tex);
+
+        usize pixel_size = (usize)next_w * (usize)next_h * sizeof(Color);
+        fb_pixels = PBMemRealloc(kPBMemGPA, fb_pixels, pixel_size);
+        assertf(fb_pixels, "cannot allocate framebuffer (%u x %u)", next_w, next_h);
+
+        fb_tex = texture_create(next_w, next_h, Texture_STREAMING | Texture_NO_FILTER);
+        fb_w = next_w;
+        fb_h = next_h;
+    }
+
+    if (fb_scale != pes.screen.scale) {
+        fb_scale = pes.screen.scale;
+        init_face_sprites();
+    }
+}
+
 static bool update_camera(f32 dt) {
-    i32 speed = (i32)(300.0f * dt);
-    if (speed < 1)
-        speed = 1;
+    f32 speed = 150.0f * dt;
 
     bool changed = false;
 
     if (key_held(Key_Left)) {
-        cam_x += speed;
+        cam_x_dp += speed;
         changed = true;
     }
     if (key_held(Key_Right)) {
-        cam_x -= speed;
+        cam_x_dp -= speed;
         changed = true;
     }
     if (key_held(Key_Up)) {
-        cam_y += speed;
+        cam_y_dp += speed;
         changed = true;
     }
     if (key_held(Key_Down)) {
-        cam_y -= speed;
+        cam_y_dp -= speed;
         changed = true;
     }
 
@@ -470,11 +505,10 @@ static bool update_game(f32 dt) {
 }
 
 void main(void) {
-    pes_init("Iso Blocks", FB_W * 2.0f, FB_H * 2.0f, rgb(30, 30, 30));
-    fb_tex = texture_create(FB_W, FB_H, Texture_STREAMING | Texture_NO_FILTER);
+    pes_init("Iso Blocks", 0, 0, rgb(30, 30, 30));
+    window_resize(WINDOW_W_DP, WINDOW_H_DP);
 
     init_palette();
-    init_face_sprites();
     init_test_world();
 
     f32 dt;
@@ -482,13 +516,16 @@ void main(void) {
         // update
         bool changed = update_game(dt);
         if (changed || (pes.events & EV_RESIZE)) {
+            if (pes.events & EV_RESIZE)
+                resize_framebuffer();
+
             // render
             render_game();
-            texture_write(fb_tex, 0, 0, FB_W, FB_H, fb_pixels);
+            texture_write(fb_tex, 0, 0, fb_w, fb_h, fb_pixels);
 
             // present
-            f32 w = FB_W * 2.0f;
-            f32 h = FB_H * 2.0f;
+            f32 w = dp_of_px((f32)fb_w);
+            f32 h = dp_of_px((f32)fb_h);
             f32 x = (pes.screen.width - w) * 0.5f;
             f32 y = (pes.screen.height - h) * 0.5f;
             draw_texture(x, y, w, h, fb_tex);
