@@ -49,7 +49,7 @@ typedef struct {
 
 typedef struct {
     f32 x, y, z;
-} Vec3;
+} __attribute__((aligned(8))) Vec3;
 
 typedef struct {
     f32 x, y, z, w;
