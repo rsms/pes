@@ -80,13 +80,10 @@ void main(void) {
             resize();
 
         draw_rect(100, 100, 100, 100, rgb(255, 0, 0));
-        Mat3x3 tr = draw_translate(200, 200);
+        draw_push();
+        draw_translate(200, 200);
         draw_rect(120, 120, 100, 100, rgb(0, 255, 0));
-        // —— HERE ——
-        //
-        //  TODO: use pes.transform internally in draw_ functions
-        //
-        pes.transform = tr;
+        draw_pop();
         draw_rect(130, 130, 100, 100, rgb(0, 255, 255));
 
         // // draw scene background

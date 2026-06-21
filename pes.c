@@ -21,6 +21,14 @@ _Static_assert(1u << GamepadHaptics_RIGHT_TRIGGER == PBSysHidHaptics_RIGHT_TRIGG
 #define pes_log_debug(fmt, ...) \
     log("[pes debug]: " fmt " (%s %s:%d)", ##__VA_ARGS__, __func__, __FILE__, __LINE__)
 
+#define DRAW_TRANSFORM_STACK_CAP 32u
+
+#if __playbit__ > 0x000300
+    #define PES_DRAW_USE_PB_TRANSFORM 1
+#else
+    #define PES_DRAW_USE_PB_TRANSFORM 0
+#endif
+
 #if !PES_DEBUG
     #undef PES_DEBUG
     #define PES_DEBUG 0
@@ -34,11 +42,14 @@ _Static_assert(1u << GamepadHaptics_RIGHT_TRIGGER == PBSysHidHaptics_RIGHT_TRIGG
 #endif
 
 typedef struct PesDrawing {
-    Color   clear_color;
-    u32     shapes_len;
-    u32     instrs_len;
-    u32     shape_run_len;
-    Texture texture; // current texture, from draw_set_texture
+    Color     clear_color;
+    u32       shapes_len;
+    u32       instrs_len;
+    u32       shape_run_len;
+    Texture   texture; // current texture, from draw_set_texture
+    Transform transform;
+    Transform transform_stack[DRAW_TRANSFORM_STACK_CAP];
+    u32       transform_stack_len;
 
     // starting at 'shapes', the remainder of this struct data is uninitialized
     PBSysWindowRendererShapeItem   shapes[512];
@@ -383,6 +394,83 @@ static void pes_draw_end_shape_run(void) {
     pes_internal.drawing->shape_run_len = 0;
 }
 
+static Transform pes_draw_transform_px(void) {
+    Transform transform = pes_internal.drawing->transform;
+    transform.o[0] = px_of_dp(transform.o[0]);
+    transform.o[1] = px_of_dp(transform.o[1]);
+    return transform;
+}
+
+#if !PES_DRAW_USE_PB_TRANSFORM
+
+static bool pes_draw_transform_position_only(Transform transform) {
+    return transform.x[0] == 1.0f && transform.x[1] == 0.0f && transform.y[0] == 0.0f
+        && transform.y[1] == 1.0f;
+}
+
+static void pes_draw_assert_position_only(Transform transform) {
+    assertf(
+        pes_draw_transform_position_only(transform),
+        "draw transforms beyond translation require Playbit > 0.3.0");
+}
+
+#else
+
+    #define pes_draw_assert_position_only(transform) ((void)0)
+
+#endif
+
+void draw_push(void) {
+    PesDrawing* drawing = pes_internal.drawing;
+    assertf(drawing, "called outside of pes_draw()");
+    if UNLIKELY (drawing->transform_stack_len == countof(drawing->transform_stack))
+        panic("draw transform stack overflow");
+    drawing->transform_stack[drawing->transform_stack_len++] = drawing->transform;
+}
+
+void draw_pop(void) {
+    PesDrawing* drawing = pes_internal.drawing;
+    assertf(drawing, "called outside of pes_draw()");
+    if UNLIKELY (drawing->transform_stack_len == 0)
+        panic("draw transform stack underflow");
+    drawing->transform = drawing->transform_stack[--drawing->transform_stack_len];
+}
+
+Transform draw_get_transform(void) {
+    PesDrawing* drawing = pes_internal.drawing;
+    assertf(drawing, "called outside of pes_draw()");
+    return drawing->transform;
+}
+
+Transform draw_transform(Transform next) {
+    PesDrawing* drawing = pes_internal.drawing;
+    assertf(drawing, "called outside of pes_draw()");
+    pes_draw_assert_position_only(next);
+    Transform prev = drawing->transform;
+    drawing->transform = next;
+    return prev;
+}
+
+void draw_translate(f32 x, f32 y) {
+    PesDrawing* drawing = pes_internal.drawing;
+    assertf(drawing, "called outside of pes_draw()");
+    drawing->transform = transform_translate(drawing->transform, x, y);
+}
+
+void draw_scale(f32 x, f32 y) {
+    PesDrawing* drawing = pes_internal.drawing;
+    assertf(drawing, "called outside of pes_draw()");
+    drawing->transform = transform_scale(drawing->transform, x, y);
+    pes_draw_assert_position_only(drawing->transform);
+}
+
+void draw_rotate(f32 radians) {
+    PesDrawing* drawing = pes_internal.drawing;
+    assertf(drawing, "called outside of pes_draw()");
+    drawing->transform = transform_rotate(drawing->transform, radians);
+    pes_draw_assert_position_only(drawing->transform);
+}
+
 Shape draw_shape(f32 x, f32 y, f32 w, f32 h) {
     PesDrawing* drawing = pes_internal.drawing;
     assertf(drawing, "called outside of pes_draw()");
@@ -395,12 +483,28 @@ Shape draw_shape(f32 x, f32 y, f32 w, f32 h) {
     if UNLIKELY (drawing->shapes_len == countof(drawing->shapes))
         panic("too many shapes (%u)", drawing->shapes_len);
 
+    Transform transform = pes_draw_transform_px();
+#if !PES_DRAW_USE_PB_TRANSFORM
+    pes_draw_assert_position_only(transform);
+    x += transform.o[0];
+    y += transform.o[1];
     PBSysWindowRendererShapeItem* shape = &drawing->shapes[drawing->shapes_len++];
     *shape = (PBSysWindowRendererShapeItem){
         .bounds = { x, y, x + w, y + h },
         .opacity = 1.0,
         .uvMax = { 1, 1 },
     };
+#else
+    PBSysWindowRendererShapeItem* shape = &drawing->shapes[drawing->shapes_len++];
+    *shape = (PBSysWindowRendererShapeItem){
+        .bounds = { x, y, x + w, y + h },
+        .opacity = 1.0,
+        .uvMax = { 1, 1 },
+        .transformX = { transform.x[0], transform.x[1] },
+        .transformY = { transform.y[0], transform.y[1] },
+        .transformO = { transform.o[0], transform.o[1] },
+    };
+#endif
 
     drawing->shape_run_len++;
 
@@ -460,6 +564,7 @@ static void pes_draw_begin(void) {
     assertf(pes_internal.drawing == NULL, "pes_draw_begin() called twice");
     pes_internal.drawing = arena_alloc(sizeof(PesDrawing));
     memset(pes_internal.drawing, 0, offsetof(PesDrawing, shapes));
+    pes_internal.drawing->transform = transform_identity();
 }
 
 static void pes_draw_end(void) {

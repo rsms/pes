@@ -67,10 +67,12 @@ typedef struct {
     u8 r, g, b, a;
 } __attribute__((aligned(4))) Color;
 
-typedef __attribute__((__ext_vector_type__(3))) f32 SimdF32x3; // f32[3]
+typedef __attribute__((__ext_vector_type__(2))) f32 SimdF32x2; // f32[2]
 typedef struct {
-    SimdF32x3 columns[3];
-} Mat3x3; // f32[3][3]
+    SimdF32x2 x;
+    SimdF32x2 y;
+    SimdF32x2 o;
+} Transform;
 
 typedef char* Str; // AStrHeader at ptr-4
 
@@ -98,7 +100,6 @@ typedef struct {
 } Gamepad;
 
 struct PES {
-    Mat3x3 transform;  // current matrix for visual transformation
     PBTime time;       // current time (monotonic clock, nanoseconds)
     Events events;     // what changed since last pes_poll call (bits of EV_)
     bool   app_active; // true when app has user focus, is in foreground (EV_ACTIVE)
@@ -179,13 +180,19 @@ static f32  gamepad_axis_value(u32 player, GamepadAxis axis);
 static bool gamepad_axis_available(u32 player, GamepadAxis);
 static bool gamepad_haptics_available(u32 player, GamepadHaptics);
 
-Shape         draw_shape(f32 x, f32 y, f32 w, f32 h);
-Shape         draw_shape_uv(f32 x, f32 y, f32 w, f32 h, Edges uv);
-Texture       draw_set_texture(Texture tex); // NoTexture to clear, returns prev texture
-Shape         draw_texture(f32 x, f32 y, f32 w, f32 h, Texture tex); // with uv {0,0,1,1}
-Shape         draw_circle(Vec2 center_pos, f32 radius);
-static Shape  draw_rect(f32 x, f32 y, f32 w, f32 h, Color fill_color);
-static Mat3x3 draw_transform(Mat3x3); // replace pes.transform, returns previous value
+Shape        draw_shape(f32 x, f32 y, f32 w, f32 h);
+Shape        draw_shape_uv(f32 x, f32 y, f32 w, f32 h, Edges uv);
+Texture      draw_set_texture(Texture tex); // NoTexture to clear, returns prev texture
+Shape        draw_texture(f32 x, f32 y, f32 w, f32 h, Texture tex); // with uv {0,0,1,1}
+Shape        draw_circle(Vec2 center_pos, f32 radius);
+static Shape draw_rect(f32 x, f32 y, f32 w, f32 h, Color fill_color);
+void         draw_push(void);
+void         draw_pop(void);
+Transform    draw_get_transform(void);
+Transform    draw_transform(Transform next); // replace transform, returns previous value
+void         draw_translate(f32 x, f32 y);
+void         draw_scale(f32 x, f32 y);
+void         draw_rotate(f32 radians);
 
 Shape shape_fill(Shape shape, Color color);
 Shape shape_stroke(Shape shape, Color color, f32 thickness);
@@ -201,12 +208,16 @@ Texture texture_create(u32 width, u32 height, TextureFlags flags); // 8-bit RGBA
 void    texture_write(Texture tex, u32 x_px, u32 y_px, u32 w_px, u32 h_px, const Color* pixels);
 Edges   texture_uv_of_rect(f32 tex_width, f32 tex_height, Rect rect);
 
-static Vec2 vec2(f32 x, f32 y);
-static Vec3 vec3(f32 x, f32 y, f32 z);
-static Vec4 vec4(f32 x, f32 y, f32 z, f32 w);
-static bool vec2_is_zero(Vec2 v);
-static Vec2 vec2_scale(Vec2 v, f32 exponent);
-static Vec2 vec2_add(Vec2 a, Vec2 b);
+static Vec2      vec2(f32 x, f32 y);
+static Vec3      vec3(f32 x, f32 y, f32 z);
+static Vec4      vec4(f32 x, f32 y, f32 z, f32 w);
+static Transform transform_identity(void);
+static Transform transform_translate(Transform transform, f32 x, f32 y);
+static Transform transform_scale(Transform transform, f32 x, f32 y);
+static Transform transform_rotate(Transform transform, f32 radians);
+static bool      vec2_is_zero(Vec2 v);
+static Vec2      vec2_scale(Vec2 v, f32 exponent);
+static Vec2      vec2_add(Vec2 a, Vec2 b);
 
 static Edges edges_flip_x(Edges e);
 static Edges edges_flip_y(Edges e);
@@ -714,77 +725,43 @@ inline static Shape draw_rect(f32 x, f32 y, f32 w, f32 h, Color fill_color) {
     return shape_fill(draw_shape(x, y, w, h), fill_color);
 }
 
-static Mat3x3 mat3x3_translation(f32 x, f32 y);
-static Mat3x3 mat3x3_translate(Mat3x3 mat, f32 x, f32 y);
-
-static Mat3x3 draw_transform(Mat3x3 next) {
-    Mat3x3 prev = pes.transform;
-    pes.transform = next;
-    return prev;
-}
-
-static Mat3x3 draw_translate(f32 x, f32 y) {
-    Mat3x3 prev = pes.transform;
-    pes.transform = mat3x3_translate(prev, x, y);
-    return prev;
-}
-
-////////////////////////////////////////////////////////////////////////////////////////////////////
-// clang-format off
-
-inline static Mat3x3 mat3x3(f32 m11, f32 m12, f32 m13,
-                            f32 m21, f32 m22, f32 m23,
-                            f32 m31, f32 m32, f32 m33)
-{
-    return (Mat3x3){{
-        { m11, m21, m31 },
-        { m12, m22, m32 },
-        { m13, m23, m33 },
-    }};
-}
-
-inline static Mat3x3 mat3x3_identity(void) {
-    return mat3x3(1, 0, 0,
-                  0, 1, 0,
-                  0, 0, 1);
-}
-
-inline static Mat3x3 mat3x3_translation(f32 x, f32 y) {
-    return mat3x3(1, 0, x,
-                  0, 1, y,
-                  0, 0, 1);
-}
-
-#define SIMD_CFUNC \
-    __attribute__((__always_inline__)) \
-    __attribute__((__const__)) \
-    __attribute__((__nodebug__)) \
+#define SIMD_CFUNC                                                                             \
+    __attribute__((__always_inline__)) __attribute__((__const__)) __attribute__((__nodebug__)) \
     __attribute__((__overloadable__))
 
-inline static SIMD_CFUNC SimdF32x3 simd_muladd(SimdF32x3 x, SimdF32x3 y, SimdF32x3 z) {
+inline static SIMD_CFUNC SimdF32x2 simd_muladd(SimdF32x2 x, SimdF32x2 y, SimdF32x2 z) {
 #pragma STDC FP_CONTRACT ON
-    return x*y + z;
+    return x * y + z;
 }
 
-inline static SimdF32x3 SIMD_CFUNC simd_mul( Mat3x3 __x,  SimdF32x3 __y) {
-    SimdF32x3 __r = __x.columns[0]*__y[0];
-    __r = simd_muladd( __x.columns[1], __y[1],__r);
-    __r = simd_muladd( __x.columns[2], __y[2],__r);
-    return __r; }
-
-inline static Mat3x3 SIMD_CFUNC simd_mul( Mat3x3 __x,  Mat3x3 __y) {
-    Mat3x3 __r;
-    for (int i=0; i<3; ++i)
-        __r.columns[i] = simd_mul(__x, __y.columns[i]);
-    return __r;
+inline static Transform transform_identity(void) {
+    return (Transform){
+        .x = { 1.0f, 0.0f },
+        .y = { 0.0f, 1.0f },
+        .o = { 0.0f, 0.0f },
+    };
 }
 
-inline static Mat3x3 mat3x3_translate(Mat3x3 mat, f32 x, f32 y) {
-    mat.columns[2][0] += x;
-    mat.columns[0] += y;
-    return mat;
-    // return simd_mul(mat, mat3x3_translation(x, y));
+inline static Transform transform_translate(Transform transform, f32 x, f32 y) {
+    transform.o = simd_muladd(transform.x, (SimdF32x2){ x, x }, transform.o);
+    transform.o = simd_muladd(transform.y, (SimdF32x2){ y, y }, transform.o);
+    return transform;
 }
 
-// clang-format on
+inline static Transform transform_scale(Transform transform, f32 x, f32 y) {
+    transform.x *= x;
+    transform.y *= y;
+    return transform;
+}
+
+inline static Transform transform_rotate(Transform transform, f32 radians) {
+    f32       c = math_cos(radians);
+    f32       s = math_sin(radians);
+    SimdF32x2 x = transform.x;
+    SimdF32x2 y = transform.y;
+    transform.x = x * c + y * s;
+    transform.y = y * c - x * s;
+    return transform;
+}
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////
