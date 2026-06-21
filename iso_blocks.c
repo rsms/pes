@@ -8,6 +8,10 @@
 #define WORLD_Y 128
 #define WORLD_Z 32
 
+_Static_assert(WORLD_X <= 256, "FaceInst x requires WORLD_X <= 256");
+_Static_assert(WORLD_Y <= 256, "FaceInst y requires WORLD_Y <= 256");
+_Static_assert(WORLD_Z <= 256, "FaceInst z requires WORLD_Z <= 256");
+
 #define TILE_W  32
 #define TILE_H  16
 #define BLOCK_H 16
@@ -18,6 +22,9 @@
 #define MAX_BLOCKS        20000u
 #define MAX_VISIBLE_FACES (MAX_BLOCKS * 3u)
 #define SORT_KEY_MAX      ((WORLD_X + WORLD_Y + WORLD_Z + 4) * 4)
+#define FACE_BITS         2u
+#define FACE_MASK         ((1u << FACE_BITS) - 1u)
+#define PALETTE_COLOR_MAX 64u
 
 typedef struct {
     i32 x, y;
@@ -33,6 +40,8 @@ typedef enum {
     FACE_TOP,
 } FaceKind;
 
+_Static_assert(FACE_TOP <= FACE_MASK, "FaceInst color_face only has 2 face bits");
+
 typedef struct {
     i16 off_x;
     i16 off_y;
@@ -43,25 +52,22 @@ typedef struct {
 
 typedef struct {
     i16 sx, sy;
-    i16 x, y, z;
+    u8  x, y, z;
+    u8  color_face;
     u32 sort_key;
-    u8  color;
-    u8  face;
 } FaceInst;
 
 static Texture fb_tex;
 static Color   fb_pixels[FB_W * FB_H];
 
 static Voxel world[WORLD_Z][WORLD_Y][WORLD_X];
-static Color palette[256];
+static Color palette[PALETTE_COLOR_MAX];
 
 static u8 top_alpha[FACE_SPRITE_MAX_W * FACE_SPRITE_MAX_H];
 static u8 left_alpha[FACE_SPRITE_MAX_W * FACE_SPRITE_MAX_H];
 static u8 right_alpha[FACE_SPRITE_MAX_W * FACE_SPRITE_MAX_H];
 
-static FaceSprite spr_top;
-static FaceSprite spr_left;
-static FaceSprite spr_right;
+static FaceSprite spr_top, spr_left, spr_right; // buffers
 
 static FaceInst faces[MAX_VISIBLE_FACES];
 static FaceInst faces_sorted[MAX_VISIBLE_FACES];
@@ -86,6 +92,11 @@ static u8 voxel_color(i32 x, i32 y, i32 z) {
 }
 
 static void voxel_set(i32 x, i32 y, i32 z, u8 color) {
+    assertf(
+        color < PALETTE_COLOR_MAX,
+        "voxel color %u exceeds %u-color FaceInst palette",
+        color,
+        PALETTE_COLOR_MAX);
     if (voxel_in_bounds(x, y, z))
         world[z][y][x].color = color;
 }
@@ -267,6 +278,24 @@ static u32 face_sort_key(i32 x, i32 y, i32 z, FaceKind face) {
     return ((u32)(x + y + z) << 2) | face_order;
 }
 
+static u8 pack_color_face(u8 color, FaceKind face) {
+    assertf(
+        color < PALETTE_COLOR_MAX,
+        "face color %u exceeds %u-color FaceInst palette",
+        color,
+        PALETTE_COLOR_MAX);
+    assertf((u32)face <= FACE_MASK, "face %u exceeds %u-bit FaceInst field", (u32)face, FACE_BITS);
+    return (u8)((color << FACE_BITS) | (u8)face);
+}
+
+static u8 face_inst_color(const FaceInst* f) {
+    return f->color_face >> FACE_BITS;
+}
+
+static FaceKind face_inst_face(const FaceInst* f) {
+    return (FaceKind)(f->color_face & FACE_MASK);
+}
+
 static void push_face(i32 x, i32 y, i32 z, FaceKind face, u8 color) {
     if (faces_len >= MAX_VISIBLE_FACES)
         return;
@@ -275,12 +304,11 @@ static void push_face(i32 x, i32 y, i32 z, FaceKind face, u8 color) {
     faces[faces_len++] = (FaceInst){
         .sx = (i16)p.x,
         .sy = (i16)p.y,
-        .x = (i16)x,
-        .y = (i16)y,
-        .z = (i16)z,
+        .x = (u8)x,
+        .y = (u8)y,
+        .z = (u8)z,
+        .color_face = pack_color_face(color, face),
         .sort_key = face_sort_key(x, y, z, face),
-        .color = color,
-        .face = (u8)face,
     };
 }
 
@@ -383,13 +411,13 @@ static const FaceSprite* sprite_for_face(FaceKind face) {
 static void render_faces(void) {
     for (u32 i = 0; i < faces_len; i++) {
         FaceInst*         f = &faces_sorted[i];
-        FaceKind          face = (FaceKind)f->face;
+        FaceKind          face = face_inst_face(f);
         const FaceSprite* s = sprite_for_face(face);
 
         if (face_sprite_offscreen(s, f->sx, f->sy))
             continue;
 
-        blit_face(s, f->sx, f->sy, shade_face(palette[f->color], face));
+        blit_face(s, f->sx, f->sy, shade_face(palette[face_inst_color(f)], face));
     }
 }
 
