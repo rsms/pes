@@ -160,8 +160,7 @@ extern struct PES pes; // system state
 void pes_init(const char* title, f32 w, f32 h, Color bg);
 bool pes_poll(f32* delta_time_out);
 
-// void pes_update(u64 events, f32 dt); // called at least 30 times per second; dt in seconds
-// void pes_draw(void);                 // called when it's time to draw the screen
+void window_resize(f32 w, f32 h);
 
 static bool key_held(KeyboardKey);
 static bool key_pressed(KeyboardKey);
@@ -205,6 +204,7 @@ Shape shape_corner_radius4(Shape shape, f32 tl, f32 tr, f32 br, f32 bl);
 #define NoTexture ((Texture){ 0 })
 Texture texture_load(const char* resource_name);
 Texture texture_create(u32 width, u32 height, TextureFlags flags); // 8-bit RGBA (0xAABBGGRR in LE)
+void    texture_close(Texture tex);
 void    texture_write(Texture tex, u32 x_px, u32 y_px, u32 w_px, u32 h_px, const Color* pixels);
 Edges   texture_uv_of_rect(f32 tex_width, f32 tex_height, Rect rect);
 

@@ -678,6 +678,10 @@ Texture texture_create(u32 width, u32 height, TextureFlags flags) {
     return (Texture){ handle };
 }
 
+void texture_close(Texture tex) {
+    PBTextureDestroy(&tex);
+}
+
 void texture_write(Texture tex, u32 x_px, u32 y_px, u32 w_px, u32 h_px, const Color* pixels) {
     usize pixels_size = (usize)w_px * (usize)h_px * 4ul;
     PanicOnErr(PBSysTextureWrite(tex.handle, x_px, y_px, pixels, pixels_size, w_px, h_px));
@@ -957,6 +961,13 @@ void pes_init(const char* title, f32 w, f32 h, Color bg) {
     pes_window_read_info();
     pes.screen.clear_color = bg;
     pes_internal.pending_events = EV_RESIZE;
+}
+
+void window_resize(f32 w, f32 h) {
+    assert_pes_initialized();
+    PanicOnErr(PBWindowSetContentSizeCentered(pes_internal.window, w, h));
+    if (pes_window_read_info())
+        pes_internal.pending_events |= EV_RESIZE;
 }
 
 bool pes_poll(f32* delta_time_out) {
