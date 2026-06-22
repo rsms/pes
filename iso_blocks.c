@@ -246,10 +246,10 @@ static void draw_mask_stair_line(u8* mask, u32 w, u32 h, P2 a, P2 b) {
         i32 x_b = x0 + sx * (((step + 1) * dx) / dy);
 
         if (sx > 0) {
-            for (i32 x = x_a; x <= x_b; x++)
+            for (i32 x = x_a; x < x_b; x++)
                 set_mask_px(mask, w, h, x, y);
         } else {
-            for (i32 x = x_a; x >= x_b; x--)
+            for (i32 x = x_a; x > x_b; x--)
                 set_mask_px(mask, w, h, x, y);
         }
     }
