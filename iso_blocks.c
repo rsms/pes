@@ -1,6 +1,13 @@
 #include "pes.h"
 #include "pes.c"
 
+#ifdef __wasm_simd128__
+    #include <wasm_simd128.h>
+#endif
+#if defined(__aarch64__) && defined(__ARM_NEON)
+    #include <arm_neon.h>
+#endif
+
 // initial window size
 #define WINDOW_W_DP 512.0f
 #define WINDOW_H_DP 512.0f
@@ -38,6 +45,12 @@ typedef struct {
     i32 x, y;
 } P2;
 
+typedef struct {
+    u32 index;
+    u8  x, y, z;
+    u8  color;
+} BlockRef;
+
 typedef enum {
     FACE_LEFT,
     FACE_RIGHT,
@@ -47,13 +60,16 @@ typedef enum {
 _Static_assert(FACE_TOP <= FACE_MASK, "FaceInst color_face only has 2 face bits");
 
 typedef struct {
-    i16 off_x;
-    i16 off_y;
-    u16 w;
-    u16 h;
-    u32 alpha_cap;
-    u8* alpha;
-    u8* lines;
+    i16  off_x;
+    i16  off_y;
+    u16  w;
+    u16  h;
+    u32  alpha_cap;
+    u32  span_cap;
+    u8*  alpha;
+    u8*  lines;
+    u16* alpha_x0;
+    u16* alpha_x1;
 } FaceSprite;
 
 typedef struct {
@@ -74,6 +90,8 @@ static Color palette[PALETTE_COLOR_MAX];
 
 static FaceSprite spr_top, spr_left, spr_right; // buffers
 
+static BlockRef occupied_blocks[MAX_BLOCKS];
+static u32      occupied_blocks_len;
 static FaceInst faces[MAX_VISIBLE_FACES];
 static FaceInst faces_sorted[MAX_VISIBLE_FACES];
 static u32      faces_len;
@@ -85,6 +103,51 @@ static u32  tile_w;
 static u32  tile_h;
 static u32  block_h;
 static bool gridlines_enabled;
+
+_Static_assert(sizeof(Color) == sizeof(u32), "clear_fb assumes 32-bit pixels");
+
+inline static u32 color_bits(Color c) {
+    return (u32)c.r | ((u32)c.g << 8u) | ((u32)c.b << 16u) | ((u32)c.a << 24u);
+}
+
+inline static void fill_color_span(Color* p, u32 n, Color c) {
+#ifdef __wasm_simd128__
+    v128_t fill = wasm_u32x4_splat(color_bits(c));
+
+    for (u32 chunks = n / 32u; chunks; chunks--) {
+        wasm_v128_store(p + 0, fill);
+        wasm_v128_store(p + 4, fill);
+        wasm_v128_store(p + 8, fill);
+        wasm_v128_store(p + 12, fill);
+        wasm_v128_store(p + 16, fill);
+        wasm_v128_store(p + 20, fill);
+        wasm_v128_store(p + 24, fill);
+        wasm_v128_store(p + 28, fill);
+        p += 32;
+    }
+
+    n &= 31u;
+#elif defined(__aarch64__) && defined(__ARM_NEON)
+    uint32x4_t fill = vdupq_n_u32(color_bits(c));
+
+    for (u32 chunks = n / 32u; chunks; chunks--) {
+        vst1q_u32((u32*)(void*)(p + 0), fill);
+        vst1q_u32((u32*)(void*)(p + 4), fill);
+        vst1q_u32((u32*)(void*)(p + 8), fill);
+        vst1q_u32((u32*)(void*)(p + 12), fill);
+        vst1q_u32((u32*)(void*)(p + 16), fill);
+        vst1q_u32((u32*)(void*)(p + 20), fill);
+        vst1q_u32((u32*)(void*)(p + 24), fill);
+        vst1q_u32((u32*)(void*)(p + 28), fill);
+        p += 32;
+    }
+
+    n &= 31u;
+#endif
+
+    for (u32 i = 0; i < n; i++)
+        p[i] = c;
+}
 
 static f32 fb_px_of_dp(f32 dp) {
     return math_round(dp * fb_scale);
@@ -127,14 +190,27 @@ static void voxel_write_at(u32 index, u8 color) {
         world[byte_index + 1u] = (u8)(value >> 8u);
 }
 
-static bool voxel_exists(i32 x, i32 y, i32 z) {
-    return voxel_in_bounds(x, y, z) && voxel_read_at(voxel_index(x, y, z)) != 0;
+static u32 occupied_block_find(u32 index) {
+    for (u32 i = 0; i < occupied_blocks_len; i++) {
+        if (occupied_blocks[i].index == index)
+            return i;
+    }
+    return (u32)-1;
 }
 
-static u8 voxel_color(i32 x, i32 y, i32 z) {
+static void voxel_clear(i32 x, i32 y, i32 z) {
     if (!voxel_in_bounds(x, y, z))
-        return 0;
-    return voxel_read_at(voxel_index(x, y, z));
+        return;
+
+    u32 index = voxel_index(x, y, z);
+    if (!voxel_read_at(index))
+        return;
+
+    u32 i = occupied_block_find(index);
+    assertf(i != (u32)-1, "occupied block list missing voxel %u", index);
+
+    voxel_write_at(index, 0);
+    occupied_blocks[i] = occupied_blocks[--occupied_blocks_len];
 }
 
 static void voxel_set(i32 x, i32 y, i32 z, u8 color) {
@@ -143,13 +219,31 @@ static void voxel_set(i32 x, i32 y, i32 z, u8 color) {
         "voxel color %u exceeds %u-color FaceInst palette",
         color,
         PALETTE_COLOR_MAX);
-    if (voxel_in_bounds(x, y, z))
-        voxel_write_at(voxel_index(x, y, z), color);
-}
+    if (color == 0) {
+        voxel_clear(x, y, z);
+        return;
+    }
+    if (!voxel_in_bounds(x, y, z))
+        return;
 
-static void voxel_clear(i32 x, i32 y, i32 z) {
-    if (voxel_in_bounds(x, y, z))
-        voxel_write_at(voxel_index(x, y, z), 0);
+    u32 index = voxel_index(x, y, z);
+    if (voxel_read_at(index)) {
+        u32 i = occupied_block_find(index);
+        assertf(i != (u32)-1, "occupied block list missing voxel %u", index);
+        voxel_write_at(index, color);
+        occupied_blocks[i].color = color;
+        return;
+    }
+
+    assertf(occupied_blocks_len < MAX_BLOCKS, "occupied block list exceeds MAX_BLOCKS");
+    voxel_write_at(index, color);
+    occupied_blocks[occupied_blocks_len++] = (BlockRef){
+        .index = index,
+        .x = (u8)x,
+        .y = (u8)y,
+        .z = (u8)z,
+        .color = color,
+    };
 }
 
 static P2 iso_project(i32 x, i32 y, i32 z) {
@@ -269,6 +363,20 @@ static void fill_mask_quad(FaceSprite* s, P2 a, P2 b, P2 c, P2 d) {
     draw_mask_line(s->lines, s->w, s->h, b, c);
     draw_mask_line(s->lines, s->w, s->h, c, d);
     draw_mask_line(s->lines, s->w, s->h, d, a);
+
+    for (u32 y = 0; y < s->h; y++) {
+        u32       x0 = 0;
+        u32       x1 = s->w;
+        const u8* alpha = s->alpha + y * s->w;
+
+        while (x0 < s->w && !alpha[x0])
+            x0++;
+        while (x1 > x0 && !alpha[x1 - 1u])
+            x1--;
+
+        s->alpha_x0[y] = (u16)x0;
+        s->alpha_x1[y] = (u16)x1;
+    }
 }
 
 static void fill_mask_left_quad(FaceSprite* s, P2 a, P2 b, P2 c, P2 d) {
@@ -297,6 +405,13 @@ static void resize_face_sprite(FaceSprite* s, i32 off_x, i32 off_y, u32 w, u32 h
         s->lines = PBMemRealloc(kPBMemGPA, s->lines, alpha_cap);
         assertf(s->lines, "cannot allocate face sprite lines (%u B)", alpha_cap);
         s->alpha_cap = alpha_cap;
+    }
+    if (s->span_cap < h) {
+        s->alpha_x0 = PBMemRealloc(kPBMemGPA, s->alpha_x0, h * sizeof(s->alpha_x0[0]));
+        assertf(s->alpha_x0, "cannot allocate face sprite alpha spans (%u rows)", h);
+        s->alpha_x1 = PBMemRealloc(kPBMemGPA, s->alpha_x1, h * sizeof(s->alpha_x1[0]));
+        assertf(s->alpha_x1, "cannot allocate face sprite alpha spans (%u rows)", h);
+        s->span_cap = h;
     }
     s->off_x = (i16)off_x;
     s->off_y = (i16)off_y;
@@ -449,32 +564,26 @@ static void push_face(i32 x, i32 y, i32 z, FaceKind face, u8 color) {
     };
 }
 
-static void emit_visible_faces_for_voxel(i32 x, i32 y, i32 z) {
-    u8 color = voxel_color(x, y, z);
-    if (!color)
-        return;
+static void emit_visible_faces_for_block(const BlockRef* b) {
+    i32 x = b->x;
+    i32 y = b->y;
+    i32 z = b->z;
 
-    if (!voxel_exists(x, y, z + 1))
-        push_face(x, y, z, FACE_TOP, color);
+    if ((u32)b->z + 1u >= WORLD_Z || voxel_read_at(b->index + WORLD_X * WORLD_Y) == 0)
+        push_face(x, y, z, FACE_TOP, b->color);
 
-    if (!voxel_exists(x, y + 1, z))
-        push_face(x, y, z, FACE_LEFT, color);
+    if ((u32)b->y + 1u >= WORLD_Y || voxel_read_at(b->index + WORLD_X) == 0)
+        push_face(x, y, z, FACE_LEFT, b->color);
 
-    if (!voxel_exists(x + 1, y, z))
-        push_face(x, y, z, FACE_RIGHT, color);
+    if ((u32)b->x + 1u >= WORLD_X || voxel_read_at(b->index + 1u) == 0)
+        push_face(x, y, z, FACE_RIGHT, b->color);
 }
 
 static void build_face_list(void) {
     faces_len = 0;
 
-    for (i32 z = 0; z < WORLD_Z; z++) {
-        for (i32 y = 0; y < WORLD_Y; y++) {
-            for (i32 x = 0; x < WORLD_X; x++) {
-                if (voxel_exists(x, y, z))
-                    emit_visible_faces_for_voxel(x, y, z);
-            }
-        }
-    }
+    for (u32 i = 0; i < occupied_blocks_len; i++)
+        emit_visible_faces_for_block(&occupied_blocks[i]);
 }
 
 static void sort_faces_counting(void) {
@@ -498,8 +607,7 @@ static void sort_faces_counting(void) {
 }
 
 static void clear_fb(Color c) {
-    for (u32 i = 0; i < fb_w * fb_h; i++)
-        fb_pixels[i] = c;
+    fill_color_span(fb_pixels, fb_w * fb_h, c);
 }
 
 static bool face_sprite_offscreen(const FaceSprite* s, i32 sx, i32 sy) {
@@ -509,31 +617,6 @@ static bool face_sprite_offscreen(const FaceSprite* s, i32 sx, i32 sy) {
     i32 y1 = y0 + s->h;
 
     return x1 < 0 || y1 < 0 || x0 >= (i32)fb_w || y0 >= (i32)fb_h;
-}
-
-static void blit_face(const FaceSprite* s, i32 sx, i32 sy, Color color) {
-    i32 dst_x0 = sx + s->off_x;
-    i32 dst_y0 = sy + s->off_y;
-
-    for (u32 y = 0; y < s->h; y++) {
-        i32 dy = dst_y0 + (i32)y;
-        if ((u32)dy >= fb_h)
-            continue;
-
-        const u8* src = s->alpha + y * s->w;
-        Color*    dst = fb_pixels + dy * fb_w;
-
-        for (u32 x = 0; x < s->w; x++) {
-            if (!src[x])
-                continue;
-
-            i32 dx = dst_x0 + (i32)x;
-            if ((u32)dx >= fb_w)
-                continue;
-
-            dst[dx] = color;
-        }
-    }
 }
 
 static void blit_face_lines(const FaceSprite* s, i32 sx, i32 sy, Color color) {
@@ -561,7 +644,34 @@ static void blit_face_lines(const FaceSprite* s, i32 sx, i32 sy, Color color) {
     }
 }
 
-static const FaceSprite* sprite_for_face(FaceKind face) {
+inline static void blit_face(const FaceSprite* s, i32 sx, i32 sy, Color color) {
+    i32 dst_x0 = sx + s->off_x;
+    i32 dst_y0 = sy + s->off_y;
+    i32 y0 = 0;
+    i32 y1 = (i32)s->h;
+
+    if (dst_y0 < 0)
+        y0 = -dst_y0;
+    if (dst_y0 + y1 > (i32)fb_h)
+        y1 = (i32)fb_h - dst_y0;
+
+    for (i32 y = y0; y < y1; y++) {
+        i32 dy = dst_y0 + (i32)y;
+        i32 x0 = dst_x0 + (i32)s->alpha_x0[y];
+        i32 x1 = dst_x0 + (i32)s->alpha_x1[y];
+
+        if (x0 < 0)
+            x0 = 0;
+        if (x1 > (i32)fb_w)
+            x1 = (i32)fb_w;
+        if (x0 >= x1)
+            continue;
+
+        fill_color_span(fb_pixels + dy * fb_w + x0, (u32)(x1 - x0), color);
+    }
+}
+
+inline static const FaceSprite* sprite_for_face(FaceKind face) {
     switch (face) {
         case FACE_LEFT:  return &spr_left;
         case FACE_RIGHT: return &spr_right;
