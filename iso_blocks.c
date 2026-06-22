@@ -349,7 +349,15 @@ static void init_palette(void) {
 }
 
 static void init_test_world(void) {
-    voxel_set(0, 20, 1, 7);
+    voxel_set(0, 20, 1, 1);
+    voxel_set(0, 21, 1, 2);
+    voxel_set(0, 22, 1, 3);
+    voxel_set(1, 20, 1, 4);
+    voxel_set(1, 21, 1, 5);
+    voxel_set(1, 22, 1, 6);
+    voxel_set(2, 20, 1, 7);
+    voxel_set(2, 21, 1, 1);
+    voxel_set(2, 22, 1, 2);
 
     for (i32 y = 16; y < 48; y++) {
         for (i32 x = 16; x < 48; x++)
