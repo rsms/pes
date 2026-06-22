@@ -109,8 +109,7 @@ static FaceInst faces_sorted[MAX_VISIBLE_FACES];
 static u32      faces_len = 0;
 static u32      sort_counts[SORT_KEY_MAX];
 
-static f32  cam_x_dp = WINDOW_W_DP * 0.5f + 200.0f;
-static f32  cam_y_dp = -80.0f;
+static Vec2 camera = { WINDOW_W_DP * 0.5f, -80.0f };
 static u32  tile_w = 0;
 static u32  tile_h = 0;
 static u32  block_h = 0;
@@ -259,8 +258,8 @@ static void voxel_set(i32 x, i32 y, i32 z, u8 color) {
 }
 
 static P2 iso_project(i32 x, i32 y, i32 z) {
-    i32 cx = (i32)fb_px_of_dp(cam_x_dp);
-    i32 cy = (i32)fb_px_of_dp(cam_y_dp);
+    i32 cx = (i32)fb_px_of_dp(camera.x);
+    i32 cy = (i32)fb_px_of_dp(camera.y);
     return (P2){
         cx + (x - y) * (i32)(tile_w / 2),
         cy + (x + y) * (i32)(tile_h / 2) - z * (i32)block_h,
@@ -801,24 +800,24 @@ static bool update_camera(f32 dt) {
     bool changed = false;
 
     if (key_held(Key_Left)) {
-        cam_x_dp += speed;
+        camera.x += speed;
         changed = true;
     }
     if (key_held(Key_Right)) {
-        cam_x_dp -= speed;
+        camera.x -= speed;
         changed = true;
     }
     if (key_held(Key_Up)) {
-        cam_y_dp += speed;
+        camera.y += speed;
         changed = true;
     }
     if (key_held(Key_Down)) {
-        cam_y_dp -= speed;
+        camera.y -= speed;
         changed = true;
     }
     if (key_held(Key_Space) && !vec2_is_zero(pes.mouse.moved)) {
-        cam_x_dp += pes.mouse.moved.x;
-        cam_y_dp += pes.mouse.moved.y;
+        camera.x += pes.mouse.moved.x;
+        camera.y += pes.mouse.moved.y;
         changed = true;
     }
 
