@@ -980,7 +980,7 @@ void pes_init(const char* title, f32 w, f32 h, Color bg) {
         pes_internal.window,
         PBSysWindowStyle_TITLEBAR | PBSysWindowStyle_TRANSPARENT_TITLEBAR
             | PBSysWindowStyle_CLOSABLE | PBSysWindowStyle_RESIZABLE | PBSysWindowStyle_MINIMIZABLE
-            | PBSysWindowStyle_FULLSIZE_CONTENT | PBSysWindowStyle_THEME_DARK);
+            | PBSysWindowStyle_FULLSIZE_CONTENT);
 
     if (w > 0.0f && h > 0.0f)
         PBWindowSetContentSizeCentered(pes_internal.window, w, h);
