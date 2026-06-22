@@ -816,12 +816,19 @@ static bool update_camera(f32 dt) {
         cam_y_dp -= speed;
         changed = true;
     }
+    if (key_held(Key_Space) && !vec2_is_zero(pes.mouse.moved)) {
+        cam_x_dp += pes.mouse.moved.x;
+        cam_y_dp += pes.mouse.moved.y;
+        changed = true;
+    }
 
     return changed;
 }
 
 static bool update(f32 dt) {
     bool changed = update_camera(dt);
+
+    pes.mouse.cursor = key_held(Key_Space) ? Cursor_OPEN_HAND : Cursor_DEFAULT;
 
     if (key_pressed(Key_G)) {
         gridlines_enabled = !gridlines_enabled;
