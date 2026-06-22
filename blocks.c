@@ -279,7 +279,7 @@ static P2 iso_project(i32 x, i32 y, i32 z) {
 }
 
 static Color shade_face(Color c, FaceKind face) {
-    f32 m = face == FACE_TOP ? 1.10f : face == FACE_RIGHT ? 0.85f : 0.70f;
+    f32 m = face == FACE_TOP ? 1.10f : face == FACE_LEFT ? 0.85f : 0.70f;
     return rgba(
         (u8)clamp((i32)((f32)c.r * m), 0, 255),
         (u8)clamp((i32)((f32)c.g * m), 0, 255),
