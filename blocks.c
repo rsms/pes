@@ -838,7 +838,7 @@ static bool update(f32 dt) {
 }
 
 void main(void) {
-    pes_init("Iso Blocks", 0, 0, rgb(30, 30, 30));
+    pes_init("Blocks", 0, 0, rgb(30, 30, 30));
     window_resize(WINDOW_W_DP, WINDOW_H_DP);
 
     init_test_world();
