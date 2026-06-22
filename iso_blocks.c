@@ -36,12 +36,11 @@ _Static_assert(WORLD_Z <= 256, "FaceInst z requires WORLD_Z <= 256");
 #define SORT_KEY_MAX      ((WORLD_X + WORLD_Y + WORLD_Z + 4) * 4)
 #define FACE_BITS         2u
 #define FACE_MASK         ((1u << FACE_BITS) - 1u)
-#define PALETTE_COLOR_MAX 64u
+#define PALETTE_COUNT     64u
 #define SHADOW_MAX_Z_DIST 12u
 #define SHADOW_MAX_DARKEN 70u
 
-_Static_assert(
-    PALETTE_COLOR_MAX <= 1u << VOXEL_COLOR_BITS, "voxel palette does not fit in packed world");
+_Static_assert(PALETTE_COUNT <= 1u << VOXEL_COLOR_BITS, "palette does not fit in packed world");
 _Static_assert(SHADOW_MAX_Z_DIST >= 2u, "shadow range must reach the nearest visible blocker");
 _Static_assert(SHADOW_MAX_DARKEN <= 100u, "shadow darken percent must be <= 100");
 
@@ -90,8 +89,7 @@ static u32     fb_h;
 static f32     fb_scale;
 
 static u8    world[WORLD_BYTE_COUNT];
-static Color palette[PALETTE_COLOR_MAX] = {
-    { 0 },                  // [0] not used; represents "absense of voxel"
+static Color palette[PALETTE_COUNT] = {
     { 220, 220, 220, 255 }, // light grey
     { 220, 80, 60, 255 },   // red
     { 80, 160, 250, 255 },  // blue
@@ -108,7 +106,7 @@ static BlockRef occupied_blocks[MAX_BLOCKS];
 static u32      occupied_blocks_len;
 static FaceInst faces[MAX_VISIBLE_FACES];
 static FaceInst faces_sorted[MAX_VISIBLE_FACES];
-static u32      faces_len;
+static u32      faces_len = 0;
 static u32      sort_counts[SORT_KEY_MAX];
 
 static f32  cam_x_dp = WINDOW_W_DP * 0.5f + 200.0f;
@@ -229,10 +227,10 @@ static void voxel_clear(i32 x, i32 y, i32 z) {
 
 static void voxel_set(i32 x, i32 y, i32 z, u8 color) {
     assertf(
-        color < PALETTE_COLOR_MAX,
+        color < PALETTE_COUNT,
         "voxel color %u exceeds %u-color FaceInst palette",
         color,
-        PALETTE_COLOR_MAX);
+        PALETTE_COUNT);
     if (color == 0) {
         voxel_clear(x, y, z);
         return;
@@ -587,17 +585,18 @@ static u32 face_sort_key(i32 x, i32 y, i32 z, FaceKind face) {
 }
 
 static u8 pack_color_face(u8 color, FaceKind face) {
+    assertf(color != 0, "face color 0 represents empty voxel");
     assertf(
-        color < PALETTE_COLOR_MAX,
+        color < PALETTE_COUNT,
         "face color %u exceeds %u-color FaceInst palette",
         color,
-        PALETTE_COLOR_MAX);
+        PALETTE_COUNT);
     assertf((u32)face <= FACE_MASK, "face %u exceeds %u-bit FaceInst field", (u32)face, FACE_BITS);
     return (u8)((color << FACE_BITS) | (u8)face);
 }
 
 static u8 face_inst_color(const FaceInst* f) {
-    return f->color_face >> FACE_BITS;
+    return (f->color_face >> FACE_BITS) - 1;
 }
 
 static FaceKind face_inst_face(const FaceInst* f) {
