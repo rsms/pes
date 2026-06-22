@@ -401,7 +401,7 @@ static Transform pes_draw_transform_px(void) {
     return transform;
 }
 
-#if !PES_DRAW_USE_PB_TRANSFORM
+#if PB_DEBUG && !PES_DRAW_USE_PB_TRANSFORM
 
 static bool pes_draw_transform_position_only(Transform transform) {
     return transform.x[0] == 1.0f && transform.x[1] == 0.0f && transform.y[0] == 0.0f
