@@ -29,7 +29,7 @@ _Static_assert(WORLD_Z <= 256, "FaceInst z requires WORLD_Z <= 256");
 
 #define TILE_W_DP  32.0f
 #define TILE_H_DP  16.0f
-#define BLOCK_H_DP 16.0f
+#define BLOCK_H_DP 18.0f
 
 #define MAX_BLOCKS        20000u
 #define MAX_VISIBLE_FACES (MAX_BLOCKS * 3u)
@@ -90,7 +90,17 @@ static u32     fb_h;
 static f32     fb_scale;
 
 static u8    world[WORLD_BYTE_COUNT];
-static Color palette[PALETTE_COLOR_MAX];
+static Color palette[PALETTE_COLOR_MAX] = {
+    { 0 },                  // [0] not used; represents "absense of voxel"
+    { 220, 220, 220, 255 }, // light grey
+    { 220, 80, 60, 255 },   // red
+    { 80, 160, 250, 255 },  // blue
+    { 250, 210, 80, 255 },  // yellow
+    { 90, 200, 110, 255 },  // green
+    { 200, 140, 240, 255 }, // purple
+    { 120, 210, 210, 255 }, // cyan
+    { 160, 140, 80, 255 },  // orange
+};
 
 static FaceSprite spr_top, spr_left, spr_right; // buffers
 
@@ -418,6 +428,15 @@ static void fill_mask_left_quad(FaceSprite* s, P2 a, P2 b, P2 c, P2 d) {
     draw_mask_line(s->lines, s->w, s->h, d, a);
 }
 
+static void fill_mask_right_quad(FaceSprite* s, P2 a, P2 b, P2 c, P2 d) {
+    fill_mask_quad(s, a, b, c, d);
+    memset(s->lines, 0, (usize)s->w * s->h);
+    draw_mask_stair_line(s->lines, s->w, s->h, a, b);
+    draw_mask_line(s->lines, s->w, s->h, b, c);
+    draw_mask_line(s->lines, s->w, s->h, c, d);
+    draw_mask_line(s->lines, s->w, s->h, d, a);
+}
+
 static void fill_mask_top_quad(FaceSprite* s, P2 a, P2 b, P2 c, P2 d) {
     fill_mask_quad(s, a, b, c, d);
     memset(s->lines, 0, (usize)s->w * s->h);
@@ -475,22 +494,12 @@ static void init_face_sprites(void) {
         (P2){ (i32)tile_w / 2, (i32)(tile_h / 2 + block_h) },
         (P2){ 0, (i32)block_h });
 
-    fill_mask_quad(
+    fill_mask_right_quad(
         &spr_right,
         (P2){ (i32)tile_w / 2, 0 },
         (P2){ 0, (i32)tile_h / 2 },
         (P2){ 0, (i32)(tile_h / 2 + block_h) },
         (P2){ (i32)tile_w / 2, (i32)block_h });
-}
-
-static void init_palette(void) {
-    palette[1] = rgb(220, 80, 60);
-    palette[2] = rgb(80, 160, 240);
-    palette[3] = rgb(240, 210, 80);
-    palette[4] = rgb(90, 200, 110);
-    palette[5] = rgb(180, 120, 240);
-    palette[6] = rgb(120, 210, 210);
-    palette[7] = rgb(220, 140, 80);
 }
 
 static void init_test_world(void) {
@@ -827,7 +836,6 @@ void main(void) {
     pes_init("Iso Blocks", 0, 0, rgb(30, 30, 30));
     window_resize(WINDOW_W_DP, WINDOW_H_DP);
 
-    init_palette();
     init_test_world();
 
     f32 dt;
