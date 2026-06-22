@@ -225,6 +225,38 @@ static void draw_mask_line(u8* mask, u32 w, u32 h, P2 a, P2 b) {
     }
 }
 
+static void draw_mask_stair_line(u8* mask, u32 w, u32 h, P2 a, P2 b) {
+    i32 x0 = a.x;
+    i32 y0 = a.y;
+    i32 dx = b.x - a.x;
+    i32 dy = b.y - a.y;
+    i32 sx = dx < 0 ? -1 : 1;
+    i32 sy = dy < 0 ? -1 : 1;
+    dx = math_abs(dx);
+    dy = math_abs(dy);
+
+    if (dy == 0) {
+        draw_mask_line(mask, w, h, a, b);
+        return;
+    }
+
+    for (i32 step = 0; step < dy; step++) {
+        i32 y = y0 + sy * step;
+        i32 x_a = x0 + sx * ((step * dx) / dy);
+        i32 x_b = x0 + sx * (((step + 1) * dx) / dy);
+
+        if (sx > 0) {
+            for (i32 x = x_a; x <= x_b; x++)
+                set_mask_px(mask, w, h, x, y);
+        } else {
+            for (i32 x = x_a; x >= x_b; x--)
+                set_mask_px(mask, w, h, x, y);
+        }
+    }
+
+    set_mask_px(mask, w, h, b.x, b.y);
+}
+
 static void fill_mask_quad(FaceSprite* s, P2 a, P2 b, P2 c, P2 d) {
     P2 p[4] = { a, b, c, d };
     for (i32 y = 0, w = (i32)s->w, h = (i32)s->h; y < h; y++) {
@@ -236,6 +268,24 @@ static void fill_mask_quad(FaceSprite* s, P2 a, P2 b, P2 c, P2 d) {
     draw_mask_line(s->lines, s->w, s->h, a, b);
     draw_mask_line(s->lines, s->w, s->h, b, c);
     draw_mask_line(s->lines, s->w, s->h, c, d);
+    draw_mask_line(s->lines, s->w, s->h, d, a);
+}
+
+static void fill_mask_left_quad(FaceSprite* s, P2 a, P2 b, P2 c, P2 d) {
+    fill_mask_quad(s, a, b, c, d);
+    memset(s->lines, 0, (usize)s->w * s->h);
+    draw_mask_stair_line(s->lines, s->w, s->h, a, b);
+    draw_mask_line(s->lines, s->w, s->h, b, c);
+    draw_mask_line(s->lines, s->w, s->h, c, d);
+    draw_mask_line(s->lines, s->w, s->h, d, a);
+}
+
+static void fill_mask_top_quad(FaceSprite* s, P2 a, P2 b, P2 c, P2 d) {
+    fill_mask_quad(s, a, b, c, d);
+    memset(s->lines, 0, (usize)s->w * s->h);
+    draw_mask_line(s->lines, s->w, s->h, a, b);
+    draw_mask_line(s->lines, s->w, s->h, b, c);
+    draw_mask_stair_line(s->lines, s->w, s->h, c, d);
     draw_mask_line(s->lines, s->w, s->h, d, a);
 }
 
@@ -266,14 +316,14 @@ static void init_face_sprites(void) {
         &spr_left, -(i32)tile_w / 2, (i32)tile_h / 2, tile_w / 2 + 1, block_h + tile_h / 2 + 1);
     resize_face_sprite(&spr_right, 0, (i32)tile_h / 2, tile_w / 2 + 1, block_h + tile_h / 2 + 1);
 
-    fill_mask_quad(
+    fill_mask_top_quad(
         &spr_top,
         (P2){ (i32)tile_w / 2, 0 },
         (P2){ (i32)tile_w, (i32)tile_h / 2 },
         (P2){ (i32)tile_w / 2, (i32)tile_h },
         (P2){ 0, (i32)tile_h / 2 });
 
-    fill_mask_quad(
+    fill_mask_left_quad(
         &spr_left,
         (P2){ 0, 0 },
         (P2){ (i32)tile_w / 2, (i32)tile_h / 2 },
@@ -594,7 +644,7 @@ static bool update_camera(f32 dt) {
     return changed;
 }
 
-static bool update_game(f32 dt) {
+static bool update(f32 dt) {
     bool changed = update_camera(dt);
 
     if (key_pressed(Key_G)) {
@@ -614,7 +664,7 @@ void main(void) {
 
     f32 dt;
     while (pes_poll(&dt)) {
-        bool changed = update_game(dt);
+        bool changed = update(dt);
         if (changed || (pes.events & EV_RESIZE)) {
             if (pes.events & EV_RESIZE)
                 resize_framebuffer();
