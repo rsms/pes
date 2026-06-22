@@ -9,8 +9,8 @@
 #endif
 
 // initial window size
-#define WINDOW_W_DP 512.0f
-#define WINDOW_H_DP 512.0f
+#define WINDOW_W_DP 800.0f
+#define WINDOW_H_DP 600.0f
 #define FB_SCALE    1u
 
 _Static_assert(FB_SCALE >= 1u, "FB_SCALE must be at least 1");
@@ -29,7 +29,7 @@ _Static_assert(WORLD_Z <= 256, "FaceInst z requires WORLD_Z <= 256");
 
 #define TILE_W_DP  32.0f
 #define TILE_H_DP  16.0f
-#define BLOCK_H_DP 20.0f
+#define BLOCK_H_DP 16.0f
 
 #define MAX_BLOCKS        20000u
 #define MAX_VISIBLE_FACES (MAX_BLOCKS * 3u)
@@ -37,9 +37,13 @@ _Static_assert(WORLD_Z <= 256, "FaceInst z requires WORLD_Z <= 256");
 #define FACE_BITS         2u
 #define FACE_MASK         ((1u << FACE_BITS) - 1u)
 #define PALETTE_COLOR_MAX 64u
+#define SHADOW_MAX_Z_DIST 12u
+#define SHADOW_MAX_DARKEN 70u
 
 _Static_assert(
     PALETTE_COLOR_MAX <= 1u << VOXEL_COLOR_BITS, "voxel palette does not fit in packed world");
+_Static_assert(SHADOW_MAX_Z_DIST >= 2u, "shadow range must reach the nearest visible blocker");
+_Static_assert(SHADOW_MAX_DARKEN <= 100u, "shadow darken percent must be <= 100");
 
 typedef struct {
     i32 x, y;
@@ -99,10 +103,10 @@ static u32      sort_counts[SORT_KEY_MAX];
 
 static f32  cam_x_dp = WINDOW_W_DP * 0.5f + 200.0f;
 static f32  cam_y_dp = -80.0f;
-static u32  tile_w;
-static u32  tile_h;
-static u32  block_h;
-static bool gridlines_enabled;
+static u32  tile_w = 0;
+static u32  tile_h = 0;
+static u32  block_h = 0;
+static bool gridlines_enabled = true;
 
 _Static_assert(sizeof(Color) == sizeof(u32), "clear_fb assumes 32-bit pixels");
 
@@ -262,6 +266,32 @@ static Color shade_face(Color c, FaceKind face) {
         (u8)clamp((i32)((f32)c.g * m), 0, 255),
         (u8)clamp((i32)((f32)c.b * m), 0, 255),
         c.a);
+}
+
+static Color darken_color(Color c, u32 percent) {
+    u32 keep = 100u - percent;
+    return rgba(
+        (u8)((u32)c.r * keep / 100u),
+        (u8)((u32)c.g * keep / 100u),
+        (u8)((u32)c.b * keep / 100u),
+        c.a);
+}
+
+static u32 top_shadow_darken(u8 x, u8 y, u8 z) {
+    u32 range = SHADOW_MAX_Z_DIST - 2u;
+    u32 index = voxel_index(x, y, z);
+    u32 z_stride = WORLD_X * WORLD_Y;
+
+    for (u32 dz = 2u; dz <= SHADOW_MAX_Z_DIST && (u32)z + dz < WORLD_Z; dz++) {
+        if (voxel_read_at(index + dz * z_stride) == 0)
+            continue;
+
+        if (range == 0)
+            return SHADOW_MAX_DARKEN;
+        return SHADOW_MAX_DARKEN * (SHADOW_MAX_Z_DIST - dz) / range;
+    }
+
+    return 0;
 }
 
 static Color gridline_color(Color c) {
@@ -514,6 +544,23 @@ static void init_test_world(void) {
         voxel_set(44, 27, z, 5);
     }
 
+    // staircase, for testing shadows
+    for (i32 z = 1; z < 18; z++) {
+        i32 step = (z - 1) & 7;
+        i32 x = 0, y = 0;
+        switch (step) {
+            case 0: x = 36, y = 18; break;
+            case 1: x = 37, y = 18; break;
+            case 2: x = 38, y = 18; break;
+            case 3: x = 38, y = 19; break;
+            case 4: x = 38, y = 20; break;
+            case 5: x = 37, y = 20; break;
+            case 6: x = 36, y = 20; break;
+            case 7: x = 36, y = 19; break;
+        }
+        voxel_set(x, y, z, (u8)(2 + (z % 5)));
+    }
+
     for (i32 y = 70; y < 114; y++) {
         for (i32 x = 68; x < 126; x++) {
             i32 h = 1 + ((x * 13 + y * 7) % 5);
@@ -690,6 +737,9 @@ static void render_faces(void) {
             continue;
 
         Color face_color = shade_face(palette[face_inst_color(f)], face);
+        if (face == FACE_TOP)
+            face_color = darken_color(face_color, top_shadow_darken(f->x, f->y, f->z));
+
         blit_face(s, f->sx, f->sy, face_color);
 
         if (gridlines_enabled)
