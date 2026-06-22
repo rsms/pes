@@ -85,14 +85,15 @@ static f32     fb_scale;
 
 static u8    world[WORLD_BYTE_COUNT];
 static Color palette[PALETTE_COUNT] = {
-    { 220, 220, 220, 255 }, // light grey
+    { 220, 220, 220, 255 }, // white
     { 220, 80, 60, 255 },   // red
     { 80, 160, 250, 255 },  // blue
     { 250, 210, 80, 255 },  // yellow
     { 90, 200, 110, 255 },  // green
     { 200, 140, 240, 255 }, // purple
     { 120, 210, 210, 255 }, // cyan
-    { 160, 140, 80, 255 },  // orange
+    { 240, 120, 80, 255 },  // orange
+    { 60, 60, 60, 255 },    // black
 };
 
 static FaceSprite spr_top, spr_left, spr_right; // buffers
@@ -518,8 +519,8 @@ static void init_test_world(void) {
     voxel_set(1, 21, 1, 5);
     voxel_set(1, 22, 1, 6);
     voxel_set(2, 20, 1, 7);
-    voxel_set(2, 21, 1, 1);
-    voxel_set(2, 22, 1, 2);
+    voxel_set(2, 21, 1, 8);
+    voxel_set(2, 22, 1, 9);
 
     for (i32 y = 16; y < 48; y++) {
         for (i32 x = 16; x < 48; x++)
