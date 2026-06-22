@@ -3,17 +3,16 @@
 
 #ifdef __wasm_simd128__
     #include <wasm_simd128.h>
-#endif
-#if defined(__aarch64__) && defined(__ARM_NEON)
+#elif defined(__aarch64__) && defined(__ARM_NEON)
     #include <arm_neon.h>
 #endif
 
-// initial window size
-#define WINDOW_W_DP 800.0f
-#define WINDOW_H_DP 600.0f
-#define FB_SCALE    1u
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// constants
 
-_Static_assert(FB_SCALE >= 1u, "FB_SCALE must be at least 1");
+#define WINDOW_W_DP 1088.0f
+#define WINDOW_H_DP 800.0f
+#define FB_SCALE    1u
 
 #define WORLD_X          128
 #define WORLD_Y          128
@@ -23,13 +22,9 @@ _Static_assert(FB_SCALE >= 1u, "FB_SCALE must be at least 1");
 #define VOXEL_COLOR_MASK ((1u << VOXEL_COLOR_BITS) - 1u)
 #define WORLD_BYTE_COUNT ((WORLD_CELL_COUNT * VOXEL_COLOR_BITS + 7u) / 8u)
 
-_Static_assert(WORLD_X <= 256, "FaceInst x requires WORLD_X <= 256");
-_Static_assert(WORLD_Y <= 256, "FaceInst y requires WORLD_Y <= 256");
-_Static_assert(WORLD_Z <= 256, "FaceInst z requires WORLD_Z <= 256");
-
 #define TILE_W_DP  32.0f
 #define TILE_H_DP  16.0f
-#define BLOCK_H_DP 18.0f
+#define BLOCK_H_DP 16.0f
 
 #define MAX_BLOCKS        20000u
 #define MAX_VISIBLE_FACES (MAX_BLOCKS * 3u)
@@ -40,9 +35,8 @@ _Static_assert(WORLD_Z <= 256, "FaceInst z requires WORLD_Z <= 256");
 #define SHADOW_MAX_Z_DIST 12u
 #define SHADOW_MAX_DARKEN 70u
 
-_Static_assert(PALETTE_COUNT <= 1u << VOXEL_COLOR_BITS, "palette does not fit in packed world");
-_Static_assert(SHADOW_MAX_Z_DIST >= 2u, "shadow range must reach the nearest visible blocker");
-_Static_assert(SHADOW_MAX_DARKEN <= 100u, "shadow darken percent must be <= 100");
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// types
 
 typedef struct {
     i32 x, y;
@@ -59,8 +53,6 @@ typedef enum {
     FACE_RIGHT,
     FACE_TOP,
 } FaceKind;
-
-_Static_assert(FACE_TOP <= FACE_MASK, "FaceInst color_face only has 2 face bits");
 
 typedef struct {
     i16  off_x;
@@ -81,6 +73,9 @@ typedef struct {
     u8  color_face;
     u32 sort_key;
 } FaceInst;
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// global state
 
 static Texture fb_tex;
 static Color*  fb_pixels;
@@ -115,7 +110,23 @@ static u32  tile_h = 0;
 static u32  block_h = 0;
 static bool gridlines_enabled = true;
 
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+_Static_assert(FB_SCALE >= 1u, "FB_SCALE must be at least 1");
+
+_Static_assert(WORLD_X <= 256, "FaceInst x requires WORLD_X <= 256");
+_Static_assert(WORLD_Y <= 256, "FaceInst y requires WORLD_Y <= 256");
+_Static_assert(WORLD_Z <= 256, "FaceInst z requires WORLD_Z <= 256");
+
+_Static_assert(PALETTE_COUNT <= 1u << VOXEL_COLOR_BITS, "palette does not fit in packed world");
+_Static_assert(SHADOW_MAX_Z_DIST >= 2u, "shadow range must reach the nearest visible blocker");
+_Static_assert(SHADOW_MAX_DARKEN <= 100u, "shadow darken percent must be <= 100");
+
 _Static_assert(sizeof(Color) == sizeof(u32), "clear_fb assumes 32-bit pixels");
+
+_Static_assert(FACE_TOP <= FACE_MASK, "FaceInst color_face only has 2 face bits");
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
 
 inline static u32 color_bits(Color c) {
     return (u32)c.r | ((u32)c.g << 8u) | ((u32)c.b << 16u) | ((u32)c.a << 24u);
