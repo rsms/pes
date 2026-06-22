@@ -68,11 +68,20 @@ static struct {
     PBTime               update_time; // last time pes_update was called
     PesDrawing* nullable drawing;
     Events               pending_events;
-} pes_internal = { 0 };
+    struct {
+        Cursor cursor;
+        bool   visible;
+    } mouse;
+} pes_internal = {
+    .mouse.cursor = Cursor_DEFAULT,
+    .mouse.visible = true,
+};
 
 struct PES pes = {
     .ent.id_pool.use_bm = pes.ent.id_pool.use_bm_storage,
     .ent.id_pool.use_bm_cap = sizeof(pes.ent.id_pool.use_bm_storage) * 8,
+    .mouse.cursor = Cursor_DEFAULT,
+    .mouse.visible = true,
 };
 
 UNUSED static const StrSlice kPesEmptyStrSlice = { .v = (const u8*)"" };
@@ -793,6 +802,26 @@ static void pes_gamepad_enable(u32 idx) {
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
+// pointer
+
+static void pes_cursor_update(void) {
+    bool was_visible = pes_internal.mouse.visible;
+
+    pes_internal.mouse.cursor = pes.mouse.cursor;
+    pes_internal.mouse.visible = pes.mouse.visible;
+
+    if (!pes.mouse.visible && was_visible == pes.mouse.visible) {
+        // cursor style changed, but it's still hidden
+        return;
+    }
+
+    PBSysCursorStyle      style = pes.mouse.cursor;
+    PBSysHandle           image = 0;
+    PBSysCursorStyleFlags flags = pes.mouse.visible ? 0 : PBSysCursorStyleFlag_HIDDEN;
+    PanicOnErr(PBSysWindowSetCursor(PBWindowMain().handle, style, image, flags));
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
 // event
 
 UNUSED static void pes_log_debug_event(const PBEvent* event) {
@@ -984,9 +1013,20 @@ bool pes_poll(f32* delta_time_out) {
     pes.screen.fullscreen = pes_internal.fullscreen;
     pes.keyboard.pressed_count = 0;
     memset(pes.keyboard.pressed, 0, sizeof(pes.keyboard.pressed));
+    pes.mouse.moved.x = 0.0f;
+    pes.mouse.moved.y = 0.0f;
+    pes.mouse.pressed = 0;
     for (u32 i = 0; i < GAMEPAD_COUNT; i++)
         pes.gamepad[i].pressed = 0;
     pes_internal.frame_ready = false;
+
+    // check for changes
+    if UNLIKELY (
+        pes.mouse.cursor != pes_internal.mouse.cursor
+        || pes.mouse.visible != pes_internal.mouse.visible)
+    {
+        pes_cursor_update();
+    }
 
     // process events until FRAME_SYNC
     while (!pes_internal.frame_ready) {

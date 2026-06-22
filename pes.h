@@ -31,6 +31,219 @@ typedef u32 Events;
 
 #define GAMEPAD_COUNT 4u
 
+typedef enum GamepadButton {
+    GamepadButton_A = PBSysGamepadButton_A,
+    GamepadButton_B = PBSysGamepadButton_B,
+    GamepadButton_X = PBSysGamepadButton_X,
+    GamepadButton_Y = PBSysGamepadButton_Y,
+    GamepadButton_LEFT_SHOULDER = PBSysGamepadButton_LEFT_SHOULDER,
+    GamepadButton_RIGHT_SHOULDER = PBSysGamepadButton_RIGHT_SHOULDER,
+    GamepadButton_LEFT_TRIGGER = PBSysGamepadButton_LEFT_TRIGGER,
+    GamepadButton_RIGHT_TRIGGER = PBSysGamepadButton_RIGHT_TRIGGER,
+    GamepadButton_LEFT_THUMBSTICK = PBSysGamepadButton_LEFT_THUMBSTICK,
+    GamepadButton_RIGHT_THUMBSTICK = PBSysGamepadButton_RIGHT_THUMBSTICK,
+    GamepadButton_MENU = PBSysGamepadButton_MENU,
+    GamepadButton_OPTIONS = PBSysGamepadButton_OPTIONS,
+    GamepadButton_HOME = PBSysGamepadButton_HOME,
+} GamepadButton;
+
+typedef enum GamepadAxis {
+    GamepadAxis_LEFT_X = PBSysGamepadAxis_LEFT_X,
+    GamepadAxis_LEFT_Y = PBSysGamepadAxis_LEFT_Y,
+    GamepadAxis_RIGHT_X = PBSysGamepadAxis_RIGHT_X,
+    GamepadAxis_RIGHT_Y = PBSysGamepadAxis_RIGHT_Y,
+    GamepadAxis_DPAD_X = PBSysGamepadAxis_DPAD_X,
+    GamepadAxis_DPAD_Y = PBSysGamepadAxis_DPAD_Y,
+    GamepadAxis_LEFT_TRIGGER = PBSysGamepadAxis_LEFT_TRIGGER,
+    GamepadAxis_RIGHT_TRIGGER = PBSysGamepadAxis_RIGHT_TRIGGER,
+} GamepadAxis;
+
+typedef enum GamepadHaptics {
+    GamepadHaptics_DEFAULT,       // PBSysHidHaptics_DEFAULT       1u << 0
+    GamepadHaptics_ALL,           // PBSysHidHaptics_ALL           1u << 1
+    GamepadHaptics_HANDLES,       // PBSysHidHaptics_HANDLES       1u << 2
+    GamepadHaptics_LEFT_HANDLE,   // PBSysHidHaptics_LEFT_HANDLE   1u << 3
+    GamepadHaptics_RIGHT_HANDLE,  // PBSysHidHaptics_RIGHT_HANDLE  1u << 4
+    GamepadHaptics_TRIGGERS,      // PBSysHidHaptics_TRIGGERS      1u << 5
+    GamepadHaptics_LEFT_TRIGGER,  // PBSysHidHaptics_LEFT_TRIGGER  1u << 6
+    GamepadHaptics_RIGHT_TRIGGER, // PBSysHidHaptics_RIGHT_TRIGGER 1u << 7
+} GamepadHaptics;
+
+typedef enum GamepadInput {
+    GamepadInput_LEFT,
+    GamepadInput_RIGHT,
+    GamepadInput_DPAD,
+    GamepadInput_LEFT_TRIGGER,
+    GamepadInput_RIGHT_TRIGGER,
+} GamepadInput;
+
+typedef enum KeyboardKey {
+    // start of pressed[0] bits
+
+    Key_0,
+    Key_1,
+    Key_2,
+    Key_3,
+    Key_4,
+    Key_5,
+    Key_6,
+    Key_7,
+    Key_8,
+    Key_9,
+    Key_A,
+    Key_B,
+    Key_C,
+    Key_D,
+    Key_E,
+    Key_F,
+    Key_G,
+    Key_H,
+    Key_I,
+    Key_J,
+    Key_K,
+    Key_L,
+    Key_M,
+    Key_N,
+    Key_O,
+    Key_P,
+    Key_Q,
+    Key_R,
+    Key_S,
+    Key_T,
+    Key_U,
+    Key_V,
+    Key_W,
+    Key_X,
+    Key_Y,
+    Key_Z,
+    Key_Space,
+    Key_Left,
+    Key_Right,
+    Key_Down,
+    Key_Up,
+    Key_Escape,    // ESC
+    Key_Enter,     // RETURN SYMBOL
+    Key_Tab,       // TAB
+    Key_Backspace, // ERASE TO THE LEFT
+    Key_Insert,    // INSERT
+    Key_Delete,    // ERASE TO THE RIGHT
+    Key_Quote,
+    Key_Comma,
+    Key_Minus,
+    Key_Period,
+    Key_Slash,
+    Key_Semicolon,
+    Key_Equal,
+    Key_LeftBracket,
+    Key_Backslash,
+    Key_RightBracket,
+    Key_Grave,
+    Key_PageUp,
+    Key_PageDown,
+    Key_Home,
+    Key_End,
+
+    // start of pressed[1] bits
+
+    Key_Numpad0 = 64,
+    Key_Numpad1,
+    Key_Numpad2,
+    Key_Numpad3,
+    Key_Numpad4,
+    Key_Numpad5,
+    Key_Numpad6,
+    Key_Numpad7,
+    Key_Numpad8,
+    Key_Numpad9,
+    Key_NumpadDot,
+    Key_NumpadDivide,
+    Key_NumpadMultiply,
+    Key_NumpadSubtract,
+    Key_NumpadAdd,
+    Key_NumpadEnter,
+    Key_NumpadEquals,
+    Key_NumpadClear,
+
+    Key_CapsLock,
+    Key_LeftShift,
+    Key_LeftCtrl,
+    Key_LeftAlt,
+    Key_LeftSuper,
+
+    Key_RightShift,
+    Key_RightCtrl,
+    Key_RightAlt,
+    Key_RightSuper,
+
+    Key_ScrollLock,
+    Key_NumLock,
+    Key_PrintScreen,
+    Key_Pause,
+
+    Key_MediaNext,
+    Key_MediaPrev,
+    Key_MediaPlay,
+    Key_MediaStop,
+    Key_VolumeUp,
+    Key_VolumeDown,
+    Key_Mute,
+
+    Key_World1,
+    Key_World2,
+
+    Key_Menu,
+
+    // start of pressed[2] bits
+
+    Key_F1 = 128,
+    Key_F2,
+    Key_F3,
+    Key_F4,
+    Key_F5,
+    Key_F6,
+    Key_F7,
+    Key_F8,
+    Key_F9,
+    Key_F10,
+    Key_F11,
+    Key_F12,
+    Key_F13,
+    Key_F14,
+    Key_F15,
+    Key_F16,
+    Key_F17,
+    Key_F18,
+    Key_F19,
+    Key_F20,
+    Key_F21,
+    Key_F22,
+    Key_F23,
+    Key_F24,
+} KeyboardKey;
+
+typedef enum Cursor {
+    Cursor_DEFAULT = PBSysCursorStyle_DEFAULT,
+    Cursor_ARROW = PBSysCursorStyle_ARROW,
+    Cursor_TEXT = PBSysCursorStyle_TEXT,
+    Cursor_TEXT_VERTICAL = PBSysCursorStyle_TEXT_VERTICAL,
+    Cursor_POINTING_HAND = PBSysCursorStyle_POINTING_HAND,
+    Cursor_CLOSED_HAND = PBSysCursorStyle_CLOSED_HAND,
+    Cursor_OPEN_HAND = PBSysCursorStyle_OPEN_HAND,
+    Cursor_RESIZE_LEFT = PBSysCursorStyle_RESIZE_LEFT,
+    Cursor_RESIZE_RIGHT = PBSysCursorStyle_RESIZE_RIGHT,
+    Cursor_RESIZE_LEFT_RIGHT = PBSysCursorStyle_RESIZE_LEFT_RIGHT,
+    Cursor_RESIZE_UP = PBSysCursorStyle_RESIZE_UP,
+    Cursor_RESIZE_DOWN = PBSysCursorStyle_RESIZE_DOWN,
+    Cursor_RESIZE_UP_DOWN = PBSysCursorStyle_RESIZE_UP_DOWN,
+    Cursor_CROSSHAIR = PBSysCursorStyle_CROSSHAIR,
+    Cursor_DISAPPEARING_ITEM = PBSysCursorStyle_DISAPPEARING_ITEM,
+    Cursor_NOT_ALLOWED = PBSysCursorStyle_NOT_ALLOWED,
+    Cursor_DRAG_LINK = PBSysCursorStyle_DRAG_LINK,
+    Cursor_DRAG_COPY = PBSysCursorStyle_DRAG_COPY,
+    Cursor_CONTEXT_MENU = PBSysCursorStyle_CONTEXT_MENU,
+    Cursor_CUSTOM_IMAGE = PBSysCursorStyle_CUSTOM_IMAGE,
+} Cursor;
+
 typedef PBSysWindowRendererShapeItem* Shape;
 typedef PBTexture                     Texture;
 typedef u32                           Ent;
@@ -75,12 +288,6 @@ typedef struct {
 } Transform;
 
 typedef char* Str; // AStrHeader at ptr-4
-
-typedef enum KeyboardKey    KeyboardKey;
-typedef enum GamepadButton  GamepadButton;
-typedef enum GamepadAxis    GamepadAxis;
-typedef enum GamepadHaptics GamepadHaptics;
-typedef enum GamepadInput   GamepadInput;
 
 typedef struct {
     u64* use_bm;            // bitmap of allocated ids
@@ -144,10 +351,12 @@ struct PES {
     } gamepad[GAMEPAD_COUNT];
 
     struct {
-        Vec2 origin;
-        Vec2 moved;   // delta moved since last update
-        u16  held;    // currently depressed buttons (bit 1 = primary, bit 2 = secondary)
-        u16  pressed; // pressed since last update
+        Vec2   origin;
+        Vec2   moved;   // delta moved since last update
+        u16    held;    // currently depressed buttons (bit 1 = primary, bit 2 = secondary)
+        u16    pressed; // pressed since last update
+        Cursor cursor;
+        bool   visible;
     } mouse;
 };
 extern struct PES pes; // system state
@@ -319,199 +528,6 @@ inline static Ent _ent_assert_valid(Ent ent, const char* func, const char* file,
 #else
     #define ent_assert_valid(Ent_ent) (Ent_ent)
 #endif
-
-////////////////////////////////////////////////////////////////////////////////////////////////////
-// enums
-
-enum GamepadButton {
-    GamepadButton_A = PBSysGamepadButton_A,
-    GamepadButton_B = PBSysGamepadButton_B,
-    GamepadButton_X = PBSysGamepadButton_X,
-    GamepadButton_Y = PBSysGamepadButton_Y,
-    GamepadButton_LEFT_SHOULDER = PBSysGamepadButton_LEFT_SHOULDER,
-    GamepadButton_RIGHT_SHOULDER = PBSysGamepadButton_RIGHT_SHOULDER,
-    GamepadButton_LEFT_TRIGGER = PBSysGamepadButton_LEFT_TRIGGER,
-    GamepadButton_RIGHT_TRIGGER = PBSysGamepadButton_RIGHT_TRIGGER,
-    GamepadButton_LEFT_THUMBSTICK = PBSysGamepadButton_LEFT_THUMBSTICK,
-    GamepadButton_RIGHT_THUMBSTICK = PBSysGamepadButton_RIGHT_THUMBSTICK,
-    GamepadButton_MENU = PBSysGamepadButton_MENU,
-    GamepadButton_OPTIONS = PBSysGamepadButton_OPTIONS,
-    GamepadButton_HOME = PBSysGamepadButton_HOME,
-};
-
-enum GamepadAxis {
-    GamepadAxis_LEFT_X = PBSysGamepadAxis_LEFT_X,
-    GamepadAxis_LEFT_Y = PBSysGamepadAxis_LEFT_Y,
-    GamepadAxis_RIGHT_X = PBSysGamepadAxis_RIGHT_X,
-    GamepadAxis_RIGHT_Y = PBSysGamepadAxis_RIGHT_Y,
-    GamepadAxis_DPAD_X = PBSysGamepadAxis_DPAD_X,
-    GamepadAxis_DPAD_Y = PBSysGamepadAxis_DPAD_Y,
-    GamepadAxis_LEFT_TRIGGER = PBSysGamepadAxis_LEFT_TRIGGER,
-    GamepadAxis_RIGHT_TRIGGER = PBSysGamepadAxis_RIGHT_TRIGGER,
-};
-
-enum GamepadHaptics {
-    GamepadHaptics_DEFAULT,       // PBSysHidHaptics_DEFAULT       1u << 0
-    GamepadHaptics_ALL,           // PBSysHidHaptics_ALL           1u << 1
-    GamepadHaptics_HANDLES,       // PBSysHidHaptics_HANDLES       1u << 2
-    GamepadHaptics_LEFT_HANDLE,   // PBSysHidHaptics_LEFT_HANDLE   1u << 3
-    GamepadHaptics_RIGHT_HANDLE,  // PBSysHidHaptics_RIGHT_HANDLE  1u << 4
-    GamepadHaptics_TRIGGERS,      // PBSysHidHaptics_TRIGGERS      1u << 5
-    GamepadHaptics_LEFT_TRIGGER,  // PBSysHidHaptics_LEFT_TRIGGER  1u << 6
-    GamepadHaptics_RIGHT_TRIGGER, // PBSysHidHaptics_RIGHT_TRIGGER 1u << 7
-};
-
-enum GamepadInput {
-    GamepadInput_LEFT,
-    GamepadInput_RIGHT,
-    GamepadInput_DPAD,
-    GamepadInput_LEFT_TRIGGER,
-    GamepadInput_RIGHT_TRIGGER,
-};
-
-enum KeyboardKey {
-    // start of pressed[0] bits
-
-    Key_0,
-    Key_1,
-    Key_2,
-    Key_3,
-    Key_4,
-    Key_5,
-    Key_6,
-    Key_7,
-    Key_8,
-    Key_9,
-    Key_A,
-    Key_B,
-    Key_C,
-    Key_D,
-    Key_E,
-    Key_F,
-    Key_G,
-    Key_H,
-    Key_I,
-    Key_J,
-    Key_K,
-    Key_L,
-    Key_M,
-    Key_N,
-    Key_O,
-    Key_P,
-    Key_Q,
-    Key_R,
-    Key_S,
-    Key_T,
-    Key_U,
-    Key_V,
-    Key_W,
-    Key_X,
-    Key_Y,
-    Key_Z,
-    Key_Space,
-    Key_Left,
-    Key_Right,
-    Key_Down,
-    Key_Up,
-    Key_Escape,    // ESC
-    Key_Enter,     // RETURN SYMBOL
-    Key_Tab,       // TAB
-    Key_Backspace, // ERASE TO THE LEFT
-    Key_Insert,    // INSERT
-    Key_Delete,    // ERASE TO THE RIGHT
-    Key_Quote,
-    Key_Comma,
-    Key_Minus,
-    Key_Period,
-    Key_Slash,
-    Key_Semicolon,
-    Key_Equal,
-    Key_LeftBracket,
-    Key_Backslash,
-    Key_RightBracket,
-    Key_Grave,
-    Key_PageUp,
-    Key_PageDown,
-    Key_Home,
-    Key_End,
-
-    // start of pressed[1] bits
-
-    Key_Numpad0 = 64,
-    Key_Numpad1,
-    Key_Numpad2,
-    Key_Numpad3,
-    Key_Numpad4,
-    Key_Numpad5,
-    Key_Numpad6,
-    Key_Numpad7,
-    Key_Numpad8,
-    Key_Numpad9,
-    Key_NumpadDot,
-    Key_NumpadDivide,
-    Key_NumpadMultiply,
-    Key_NumpadSubtract,
-    Key_NumpadAdd,
-    Key_NumpadEnter,
-    Key_NumpadEquals,
-    Key_NumpadClear,
-
-    Key_CapsLock,
-    Key_LeftShift,
-    Key_LeftCtrl,
-    Key_LeftAlt,
-    Key_LeftSuper,
-
-    Key_RightShift,
-    Key_RightCtrl,
-    Key_RightAlt,
-    Key_RightSuper,
-
-    Key_ScrollLock,
-    Key_NumLock,
-    Key_PrintScreen,
-    Key_Pause,
-
-    Key_MediaNext,
-    Key_MediaPrev,
-    Key_MediaPlay,
-    Key_MediaStop,
-    Key_VolumeUp,
-    Key_VolumeDown,
-    Key_Mute,
-
-    Key_World1,
-    Key_World2,
-
-    Key_Menu,
-
-    // start of pressed[2] bits
-
-    Key_F1 = 128,
-    Key_F2,
-    Key_F3,
-    Key_F4,
-    Key_F5,
-    Key_F6,
-    Key_F7,
-    Key_F8,
-    Key_F9,
-    Key_F10,
-    Key_F11,
-    Key_F12,
-    Key_F13,
-    Key_F14,
-    Key_F15,
-    Key_F16,
-    Key_F17,
-    Key_F18,
-    Key_F19,
-    Key_F20,
-    Key_F21,
-    Key_F22,
-    Key_F23,
-    Key_F24,
-};
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // implementation
