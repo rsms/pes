@@ -4,6 +4,8 @@ This is a miniature game engine
 
 See `pes.h` for API and run examples in this directory with `pb run <filename>`, e.g. `pb run bouncing-ball.c`
 
+> Don't have `pb` in PATH? Add `export PATH=/Applications/Playbit.app/Contents/SharedSupport/bin:$PATH` to your shell's init file, like for example `~/.zshenv` or `~/.profile`
+
 ## Example
 
 `pb run bounce.c`
