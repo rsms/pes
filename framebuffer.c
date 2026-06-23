@@ -110,30 +110,3 @@ void main(void) {
         draw_texture(x, y, w, h, fb_tex);
     }
 }
-
-// void pes_init(void) {
-//     pes.screen.clear_color = rgb(30, 30, 30);
-//     pes.screen.width = fb_w * 2;
-//     pes.screen.height = fb_h * 2;
-//     fb_tex = texture_create(fb_w, fb_h, Texture_STREAMING | Texture_NO_FILTER);
-// }
-
-// void pes_update(u64 events, f32 dt) {
-//     ball_update(dt);
-//     Color* px = fb_pixels;
-//     for (u32 y = 0, w = fb_w, h = fb_h, d = 1; y < h; y++) {
-//         for (u32 x = 0; x < w; x++)
-//             *px++ = (d + x) % 2 == 0 ? rgb(240, 238, 220) : rgb(220, 218, 200);
-//         d++;
-//     }
-//     ball_render(pos);
-//     texture_write(fb_tex, 0, 0, fb_w, fb_h, fb_pixels);
-// }
-
-// void pes_draw(void) {
-//     f32 w = fb_w * 2;
-//     f32 h = fb_h * 2;
-//     f32 x = (pes.screen.width - w) / 2.0f;
-//     f32 y = (pes.screen.height - h) / 2.0f;
-//     draw_texture(x, y, w, h, fb_tex);
-// }
