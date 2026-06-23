@@ -1029,7 +1029,7 @@ static void draw_face_outline_edges(FaceKind face, i32 sx, i32 sy, i32 thickness
     P2 top = { sx, sy };
     P2 left = { sx - (i32)tile_w / 2, sy + (i32)tile_h / 2 };
     P2 right = { sx + (i32)tile_w / 2, sy + (i32)tile_h / 2 };
-    P2 left_bottom = { sx - (i32)tile_w / 2, sy + (i32)block_h };
+    P2 left_bottom = { sx - (i32)tile_w / 2, sy + (i32)tile_h / 2 + (i32)block_h };
     P2 right_bottom = { sx + (i32)tile_w / 2, sy + (i32)tile_h / 2 + (i32)block_h };
     P2 bottom = { sx, sy + (i32)tile_h + (i32)block_h };
 
