@@ -153,6 +153,8 @@ static FaceInst faces[MAX_VISIBLE_FACES];
 static FaceInst faces_sorted[MAX_VISIBLE_FACES];
 static u32      faces_len = 0;
 static u32      sort_counts[SORT_KEY_MAX];
+static u8*      selected_surface_mask;
+static u32      selected_surface_mask_cap;
 
 static Vec2 camera = { WINDOW_W_DP * 0.5f, -80.0f };
 static u32  tile_w = 0;
@@ -954,6 +956,132 @@ static void draw_fb_line(P2 a, P2 b, i32 thickness, Color color) {
     }
 }
 
+static void ensure_selected_surface_mask(void) {
+    u32 size = fb_w * fb_h;
+    if (selected_surface_mask_cap >= size)
+        return;
+
+    selected_surface_mask = PBMemRealloc(kPBMemGPA, selected_surface_mask, size);
+    assertf(selected_surface_mask, "cannot allocate selected surface mask (%u B)", size);
+    selected_surface_mask_cap = size;
+}
+
+static bool is_selected_face(const FaceInst* f, i32 x, i32 y, i32 z) {
+    return f->x == x && f->y == y && f->z == z;
+}
+
+static void mark_selected_surface(
+    const FaceSprite* s, i32 sx, i32 sy, bool selected, u8* mask, u32 mask_w, u32 mask_h) {
+    i32 dst_x0 = sx + s->off_x;
+    i32 dst_y0 = sy + s->off_y;
+    i32 y0 = 0;
+    i32 y1 = (i32)s->h;
+
+    if (dst_y0 < 0)
+        y0 = -dst_y0;
+    if (dst_y0 + y1 > (i32)mask_h)
+        y1 = (i32)mask_h - dst_y0;
+
+    for (i32 y = y0; y < y1; y++) {
+        i32 dy = dst_y0 + y;
+        i32 x0 = dst_x0 + (i32)s->alpha_x0[y];
+        i32 x1 = dst_x0 + (i32)s->alpha_x1[y];
+
+        if (x0 < 0)
+            x0 = 0;
+        if (x1 > (i32)mask_w)
+            x1 = (i32)mask_w;
+        if (x0 >= x1)
+            continue;
+
+        memset(mask + (u32)dy * mask_w + (u32)x0, selected ? 255 : 0, (usize)(x1 - x0));
+    }
+}
+
+static void build_selected_surface_mask(i32 x, i32 y, i32 z) {
+    ensure_selected_surface_mask();
+    memset(selected_surface_mask, 0, (usize)fb_w * fb_h);
+
+    for (u32 i = 0; i < faces_len; i++) {
+        FaceInst*         f = &faces_sorted[i];
+        FaceKind          face = face_inst_face(f);
+        const FaceSprite* s = sprite_for_face(face);
+
+        if (face_sprite_offscreen(s, f->sx, f->sy))
+            continue;
+
+        mark_selected_surface(
+            s, f->sx, f->sy, is_selected_face(f, x, y, z), selected_surface_mask, fb_w, fb_h);
+    }
+}
+
+static bool selected_surface_mask_at(i32 x, i32 y) {
+    return (u32)x < fb_w && (u32)y < fb_h && selected_surface_mask[(u32)y * fb_w + (u32)x] != 0;
+}
+
+static bool selected_surface_mask_near(i32 x, i32 y, i32 radius) {
+    for (i32 yy = y - radius; yy <= y + radius; yy++) {
+        for (i32 xx = x - radius; xx <= x + radius; xx++) {
+            if (selected_surface_mask_at(xx, yy))
+                return true;
+        }
+    }
+    return false;
+}
+
+static void draw_selected_surface_outline(i32 thickness, Color color) {
+    for (u32 y = 0; y < fb_h; y++) {
+        for (u32 x = 0; x < fb_w; x++) {
+            if (!selected_surface_mask[y * fb_w + x])
+                continue;
+
+            if (x == 0 || y == 0 || x + 1u >= fb_w || y + 1u >= fb_h
+                || !selected_surface_mask[y * fb_w + x - 1u]
+                || !selected_surface_mask[y * fb_w + x + 1u]
+                || !selected_surface_mask[(y - 1u) * fb_w + x]
+                || !selected_surface_mask[(y + 1u) * fb_w + x])
+            {
+                blend_stamp((i32)x, (i32)y, thickness, color);
+            }
+        }
+    }
+}
+
+static void draw_hidden_edge_dashes(
+    P2 a, P2 b, i32 thickness, i32 dash_len, Color color_a, Color color_b) {
+    i32 x0 = a.x;
+    i32 y0 = a.y;
+    i32 x1 = b.x;
+    i32 y1 = b.y;
+    i32 dx = math_abs(x1 - x0);
+    i32 sx = x0 < x1 ? 1 : -1;
+    i32 dy = -math_abs(y1 - y0);
+    i32 sy = y0 < y1 ? 1 : -1;
+    i32 err = dx + dy;
+    i32 step = 0;
+    i32 surface_radius = (i32)math_max(1, (i32)fb_px_of_dp(2.0f));
+
+    for (;;) {
+        if (!selected_surface_mask_near(x0, y0, surface_radius)) {
+            Color color = ((step / dash_len) & 1) ? color_a : color_b;
+            blend_stamp(x0, y0, thickness, color);
+        }
+        if (x0 == x1 && y0 == y1)
+            break;
+
+        i32 e2 = err * 2;
+        if (e2 >= dy) {
+            err += dy;
+            x0 += sx;
+        }
+        if (e2 <= dx) {
+            err += dx;
+            y0 += sy;
+        }
+        step++;
+    }
+}
+
 static void blit_face_blend(const FaceSprite* s, i32 sx, i32 sy, Color color) {
     i32 dst_x0 = sx + s->off_x;
     i32 dst_y0 = sy + s->off_y;
@@ -1025,48 +1153,54 @@ static void draw_preview_contact_shadow(const CellTarget* target) {
     blit_face_blend(s, target->contact_face.sx, target->contact_face.sy, color);
 }
 
-static void draw_face_outline_edges(FaceKind face, i32 sx, i32 sy, i32 thickness, Color color) {
-    P2 top = { sx, sy };
-    P2 left = { sx - (i32)tile_w / 2, sy + (i32)tile_h / 2 };
-    P2 right = { sx + (i32)tile_w / 2, sy + (i32)tile_h / 2 };
-    P2 left_bottom = { sx - (i32)tile_w / 2, sy + (i32)tile_h / 2 + (i32)block_h };
-    P2 right_bottom = { sx + (i32)tile_w / 2, sy + (i32)tile_h / 2 + (i32)block_h };
-    P2 bottom = { sx, sy + (i32)tile_h + (i32)block_h };
-
-    switch (face) {
-        case FACE_TOP:
-            draw_fb_line(top, left, thickness, color);
-            draw_fb_line(top, right, thickness, color);
-            break;
-        case FACE_LEFT:
-            draw_fb_line(left, left_bottom, thickness, color);
-            draw_fb_line(left_bottom, bottom, thickness, color);
-            break;
-        case FACE_RIGHT:
-            draw_fb_line(right, right_bottom, thickness, color);
-            draw_fb_line(bottom, right_bottom, thickness, color);
-            break;
-    }
-}
-
 static void draw_block_outline(i32 x, i32 y, i32 z, bool only_visible_faces) {
-    i32   thickness = (i32)math_max(1, (i32)fb_px_of_dp(2.0f));
-    Color color = rgba(255, 255, 255, 230);
+    P2 p = iso_project(x, y, z);
+    P2 v[7] = {
+        { p.x, p.y },
+        { p.x - (i32)tile_w / 2, p.y + (i32)tile_h / 2 },
+        { p.x + (i32)tile_w / 2, p.y + (i32)tile_h / 2 },
+        { p.x, p.y + (i32)tile_h },
+        { p.x - (i32)tile_w / 2, p.y + (i32)tile_h / 2 + (i32)block_h },
+        { p.x + (i32)tile_w / 2, p.y + (i32)tile_h / 2 + (i32)block_h },
+        { p.x, p.y + (i32)tile_h + (i32)block_h },
+    };
+
+    struct {
+        u8 a, b;
+    } outer_edges[] = {
+        { 0, 1 }, { 0, 2 }, { 1, 4 }, { 4, 6 }, { 2, 5 }, { 5, 6 },
+    };
+    struct {
+        u8 a, b;
+    } cube_edges[] = {
+        { 0, 1 }, { 0, 2 }, { 1, 3 }, { 2, 3 }, { 1, 4 }, { 3, 6 }, { 4, 6 }, { 2, 5 }, { 5, 6 },
+    };
+
+    i32   solid_thickness = (i32)math_max(1, (i32)fb_px_of_dp(2.0f));
+    i32   dashed_thickness = (i32)math_max(1, (i32)fb_px_of_dp(1.0f));
+    i32   dash_len = (i32)math_max(2, (i32)fb_px_of_dp(3.0f));
+    Color solid = rgba(255, 255, 255, 235);
+    Color dash_black = rgba(0, 0, 0, 220);
+    Color dash_white = rgba(255, 255, 255, 220);
 
     if (!only_visible_faces) {
-        P2 p = iso_project(x, y, z);
-        draw_face_outline_edges(FACE_TOP, p.x, p.y, thickness, color);
-        draw_face_outline_edges(FACE_LEFT, p.x, p.y, thickness, color);
-        draw_face_outline_edges(FACE_RIGHT, p.x, p.y, thickness, color);
+        for (u32 i = 0; i < countof(outer_edges); i++)
+            draw_fb_line(v[outer_edges[i].a], v[outer_edges[i].b], solid_thickness, solid);
         return;
     }
 
-    for (u32 i = 0; i < faces_len; i++) {
-        FaceInst* f = &faces_sorted[i];
-        if (f->x != x || f->y != y || f->z != z)
-            continue;
-        draw_face_outline_edges(face_inst_face(f), f->sx, f->sy, thickness, color);
-    }
+    build_selected_surface_mask(x, y, z);
+
+    for (u32 i = 0; i < countof(cube_edges); i++)
+        draw_hidden_edge_dashes(
+            v[cube_edges[i].a],
+            v[cube_edges[i].b],
+            dashed_thickness,
+            dash_len,
+            dash_black,
+            dash_white);
+
+    draw_selected_surface_outline(solid_thickness, solid);
 }
 
 static f32 impact_unit(u32 seed) {
