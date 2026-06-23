@@ -852,7 +852,8 @@ static void pes_on_keyboard_event(PBKeyboardEvent* ev) {
 
     bool pressed = ev->inputEvent.event.type == PBEventType_KEY_DOWN;
     bit_toggle(pes.keyboard.held, key_bit, pressed);
-    bit_toggle(pes.keyboard.pressed, key_bit, pressed);
+    if (pressed)
+        bit_set(pes.keyboard.pressed, key_bit);
 
     pes.keyboard.held_count =
         __builtin_popcountll(pes.keyboard.held[0]) + __builtin_popcountll(pes.keyboard.held[1])
