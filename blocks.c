@@ -31,13 +31,21 @@
 #define SORT_KEY_MAX      ((WORLD_X + WORLD_Y + WORLD_Z + 4) * 4)
 #define FACE_BITS         2u
 #define FACE_MASK         ((1u << FACE_BITS) - 1u)
-#define PALETTE_COUNT     64u
+
+#define PALETTE_COUNT 64u
+
 #define SHADOW_MAX_Z_DIST 12u
 #define SHADOW_MAX_DARKEN 70u
-#define MOUSE_PRIMARY     1u
-#define MOUSE_SECONDARY   2u
-#define IMPACT_DURATION   0.32f
-#define IMPACT_PARTICLES  14u
+
+#define MOUSE_PRIMARY   1u
+#define MOUSE_SECONDARY 2u
+
+#define IMPACT_DURATION  0.32f
+#define IMPACT_PARTICLES 14u
+
+#define PREVIEW_BLOCK_ALPHA    160 // 0-255
+#define PREVIEW_CAST_SHADOW    75  // 0-255
+#define PREVIEW_CONTACT_SHADOW 75  // 0-255
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // types
@@ -984,26 +992,37 @@ static void draw_block_overlay(i32 x, i32 y, i32 z, u8 color, u8 alpha) {
     blit_face_blend(&spr_top, p.x, p.y, top);
 }
 
-static void draw_preview_shadow(const CellTarget* target, u8 alpha) {
-    if (target->contact_valid) {
-        FaceKind          face = face_inst_face(&target->contact_face);
-        const FaceSprite* s = sprite_for_face(face);
-        blit_face_blend(s, target->contact_face.sx, target->contact_face.sy, rgba(0, 0, 0, alpha));
+static void draw_preview_cast_shadow(const CellTarget* target) {
+    if (target->z <= 1)
+        return;
+
+    for (i32 support_z = target->z - 1; support_z >= 0; support_z--) {
+        if (!voxel_in_bounds(target->x, target->y, support_z)
+            || voxel_read_at(voxel_index(target->x, target->y, support_z)) == 0)
+        {
+            continue;
+        }
+
+        i32 dz = target->z - support_z;
+        if (dz <= 1 || dz > (i32)SHADOW_MAX_Z_DIST)
+            return;
+
+        u32 alpha = PREVIEW_CAST_SHADOW;
+        u8  cast_alpha = (u8)(alpha * (SHADOW_MAX_Z_DIST - (u32)dz + 1u) / SHADOW_MAX_Z_DIST);
+        P2  p = iso_project(target->x, target->y, support_z);
+        blit_face_blend(&spr_top, p.x, p.y, rgba(0, 0, 0, cast_alpha));
         return;
     }
+}
 
-    if (target->z <= 0)
+static void draw_preview_contact_shadow(const CellTarget* target) {
+    if (!target->contact_valid)
         return;
 
-    i32 support_z = target->z - 1;
-    if (!voxel_in_bounds(target->x, target->y, support_z)
-        || voxel_read_at(voxel_index(target->x, target->y, support_z)) == 0)
-    {
-        return;
-    }
-
-    P2 p = iso_project(target->x, target->y, support_z);
-    blit_face_blend(&spr_top, p.x, p.y, rgba(0, 0, 0, alpha));
+    FaceKind          face = face_inst_face(&target->contact_face);
+    const FaceSprite* s = sprite_for_face(face);
+    Color             color = rgba(0, 0, 0, PREVIEW_CONTACT_SHADOW);
+    blit_face_blend(s, target->contact_face.sx, target->contact_face.sy, color);
 }
 
 static void draw_face_outline_edges(FaceKind face, i32 sx, i32 sy, i32 thickness, Color color) {
@@ -1155,9 +1174,14 @@ static void render_interaction_overlay(void) {
         draw_block_outline(selected_block.x, selected_block.y, selected_block.z, true);
 
     if (interaction_mode == Mode_ADD && add_preview.valid) {
-        draw_preview_shadow(&add_preview, 75);
+        draw_preview_cast_shadow(&add_preview);
         draw_block_overlay(
-            add_preview.x, add_preview.y, add_preview.z, selected_palette_slot + 1u, 105);
+            add_preview.x,
+            add_preview.y,
+            add_preview.z,
+            selected_palette_slot + 1u,
+            PREVIEW_BLOCK_ALPHA);
+        draw_preview_contact_shadow(&add_preview);
     }
 
     render_impact_overlay();
