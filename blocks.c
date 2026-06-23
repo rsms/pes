@@ -1,18 +1,12 @@
 #include "pes.h"
 #include "pes.c"
 
-#ifdef __wasm_simd128__
-    #include <wasm_simd128.h>
-#elif defined(__aarch64__) && defined(__ARM_NEON)
-    #include <arm_neon.h>
-#endif
-
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // constants
 
 #define WINDOW_W_DP 1088.0f
 #define WINDOW_H_DP 800.0f
-#define FB_SCALE    1u
+#define FB_SCALE    2u
 
 #define WORLD_X          128
 #define WORLD_Y          128
@@ -24,7 +18,7 @@
 
 #define TILE_W_DP  32.0f
 #define TILE_H_DP  16.0f
-#define BLOCK_H_DP 16.0f
+#define BLOCK_H_DP 18.0f
 
 #define MAX_BLOCKS        20000u
 #define MAX_VISIBLE_FACES (MAX_BLOCKS * 3u)
@@ -192,47 +186,9 @@ _Static_assert(FACE_TOP <= FACE_MASK, "FaceInst color_face only has 2 face bits"
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-inline static u32 color_bits(Color c) {
-    return (u32)c.r | ((u32)c.g << 8u) | ((u32)c.b << 16u) | ((u32)c.a << 24u);
-}
-
 inline static void fill_color_span(Color* p, u32 n, Color c) {
-#ifdef __wasm_simd128__
-    v128_t fill = wasm_u32x4_splat(color_bits(c));
-
-    for (u32 chunks = n / 32u; chunks; chunks--) {
-        wasm_v128_store(p + 0, fill);
-        wasm_v128_store(p + 4, fill);
-        wasm_v128_store(p + 8, fill);
-        wasm_v128_store(p + 12, fill);
-        wasm_v128_store(p + 16, fill);
-        wasm_v128_store(p + 20, fill);
-        wasm_v128_store(p + 24, fill);
-        wasm_v128_store(p + 28, fill);
-        p += 32;
-    }
-
-    n &= 31u;
-#elif defined(__aarch64__) && defined(__ARM_NEON)
-    uint32x4_t fill = vdupq_n_u32(color_bits(c));
-
-    for (u32 chunks = n / 32u; chunks; chunks--) {
-        vst1q_u32((u32*)(void*)(p + 0), fill);
-        vst1q_u32((u32*)(void*)(p + 4), fill);
-        vst1q_u32((u32*)(void*)(p + 8), fill);
-        vst1q_u32((u32*)(void*)(p + 12), fill);
-        vst1q_u32((u32*)(void*)(p + 16), fill);
-        vst1q_u32((u32*)(void*)(p + 20), fill);
-        vst1q_u32((u32*)(void*)(p + 24), fill);
-        vst1q_u32((u32*)(void*)(p + 28), fill);
-        p += 32;
-    }
-
-    n &= 31u;
-#endif
-
-    for (u32 i = 0; i < n; i++)
-        p[i] = c;
+    u32 rgba = (u32)c.r | ((u32)c.g << 8u) | ((u32)c.b << 16u) | ((u32)c.a << 24u);
+    memset_u32((u32*)p, rgba, n);
 }
 
 static f32 fb_px_of_dp(f32 dp) {
@@ -1579,6 +1535,7 @@ static bool update(f32 dt) {
 void main(void) {
     pes_init("Blocks", 0, 0, rgb(30, 30, 30));
     window_resize(WINDOW_W_DP, WINDOW_H_DP);
+    log("__playbit__ %06x", __playbit__);
 
     init_test_world();
 

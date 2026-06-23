@@ -1,5 +1,11 @@
 #include "pes.h"
 
+#ifdef __wasm_simd128__
+    #include <wasm_simd128.h>
+#elif defined(__aarch64__) && defined(__ARM_NEON)
+    #include <arm_neon.h>
+#endif
+
 _Static_assert(
     offsetof(Gamepad, have_button) % 4 == 0,
     "can load {have_button,have_axis,have_haptics} as u32");
@@ -125,6 +131,48 @@ f32 math_atan2_f32(f32 y, f32 x) {
     angle += (0.1963f * r * r - 0.9817f) * r;
 
     return y < 0.0f ? -angle : angle;
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// memory
+
+void memset_u32(u32* p, u32 value, u32 count) {
+#ifdef __wasm_simd128__
+    v128_t fill = wasm_u32x4_splat(value);
+
+    for (u32 chunks = count / 32u; chunks; chunks--) {
+        wasm_v128_store(p + 0, fill);
+        wasm_v128_store(p + 4, fill);
+        wasm_v128_store(p + 8, fill);
+        wasm_v128_store(p + 12, fill);
+        wasm_v128_store(p + 16, fill);
+        wasm_v128_store(p + 20, fill);
+        wasm_v128_store(p + 24, fill);
+        wasm_v128_store(p + 28, fill);
+        p += 32;
+    }
+
+    count &= 31u;
+#elif defined(__aarch64__) && defined(__ARM_NEON)
+    uint32x4_t fill = vdupq_n_u32(value);
+
+    for (u32 chunks = count / 32u; chunks; chunks--) {
+        vst1q_u32((u32*)(void*)(p + 0), fill);
+        vst1q_u32((u32*)(void*)(p + 4), fill);
+        vst1q_u32((u32*)(void*)(p + 8), fill);
+        vst1q_u32((u32*)(void*)(p + 12), fill);
+        vst1q_u32((u32*)(void*)(p + 16), fill);
+        vst1q_u32((u32*)(void*)(p + 20), fill);
+        vst1q_u32((u32*)(void*)(p + 24), fill);
+        vst1q_u32((u32*)(void*)(p + 28), fill);
+        p += 32;
+    }
+
+    count &= 31u;
+#endif
+
+    for (u32 i = 0; i < count; i++)
+        p[i] = value;
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////

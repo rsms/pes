@@ -492,6 +492,8 @@ static void bit_clear(void* bits, usize bit);
 static void bit_toggle(void* bits, usize bit, bool on);
 static u64  flag_toggle(u64 flags, u64 flag, bool on);
 
+void memset_u32(u32* p, u32 value, u32 count); // p[0..count-1] = value
+
 // bool array_resize(Array(T)* array, usize min_cap)
 // T* array_assign(usize index, Array(T*) array)
 #define array_resize(array, min_cap) PBArrayResize((array), kMemGPA, (min_cap), PBMem_ZERO)
