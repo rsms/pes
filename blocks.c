@@ -1107,8 +1107,8 @@ static Vec2 impact_shake(void) {
         return vec2(0.0f, 0.0f);
 
     f32 t = clamp_0_1(impact_anim.elapsed / IMPACT_DURATION);
-    f32 amp = (1.0f - t) * 2.5f;
-    return vec2(math_sin(t * PI * 34.0f) * amp, math_sin(t * PI * 47.0f) * amp * 0.55f);
+    f32 amp = (1.0f - t) * 0.8f;
+    return vec2(math_sin(t * PI * 10.0f) * amp, math_sin(t * PI * 14.0f) * amp * 0.45f);
 }
 
 static void draw_impact_particles(void) {
