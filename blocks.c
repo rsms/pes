@@ -34,6 +34,10 @@
 #define PALETTE_COUNT     64u
 #define SHADOW_MAX_Z_DIST 12u
 #define SHADOW_MAX_DARKEN 70u
+#define MOUSE_PRIMARY     1u
+#define MOUSE_SECONDARY   2u
+#define FALL_DURATION     0.28f
+#define FALL_HEIGHT       10.0f
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // types
@@ -74,6 +78,33 @@ typedef struct {
     u32 sort_key;
 } FaceInst;
 
+typedef enum {
+    Mode_SELECT,
+    Mode_ADD,
+} InteractionMode;
+
+typedef struct {
+    bool     valid;
+    FaceInst face;
+} FaceHit;
+
+typedef struct {
+    bool valid;
+    i32  x, y, z;
+} CellTarget;
+
+typedef struct {
+    bool valid;
+    i32  x, y, z;
+} SelectedBlock;
+
+typedef struct {
+    bool valid;
+    i32  x, y, z;
+    u8   color;
+    f32  elapsed;
+} FallingBlock;
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // global state
 
@@ -94,6 +125,7 @@ static Color palette[PALETTE_COUNT] = {
     { 120, 210, 210, 255 }, // cyan
     { 240, 120, 80, 255 },  // orange
     { 60, 60, 60, 255 },    // black
+    { 245, 120, 180, 255 }, // pink
 };
 
 static FaceSprite spr_top, spr_left, spr_right; // buffers
@@ -110,6 +142,13 @@ static u32  tile_w = 0;
 static u32  tile_h = 0;
 static u32  block_h = 0;
 static bool gridlines_enabled = true;
+
+static InteractionMode interaction_mode = Mode_SELECT;
+static FaceHit         hover_face;
+static CellTarget      add_preview;
+static SelectedBlock   selected_block;
+static FallingBlock    falling_block;
+static u8              selected_palette_slot = 1;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -746,6 +785,256 @@ inline static const FaceSprite* sprite_for_face(FaceKind face) {
     return &spr_top;
 }
 
+static bool face_hit_test(const FaceInst* f, i32 px, i32 py) {
+    FaceKind          face = face_inst_face(f);
+    const FaceSprite* s = sprite_for_face(face);
+    i32               x = px - (f->sx + s->off_x);
+    i32               y = py - (f->sy + s->off_y);
+
+    if ((u32)x >= s->w || (u32)y >= s->h)
+        return false;
+    return s->alpha[(u32)y * s->w + (u32)x] != 0;
+}
+
+static FaceHit pick_visible_face(void) {
+    FaceHit hit = { 0 };
+    if (fb_w == 0 || fb_h == 0)
+        return hit;
+
+    i32 px = (i32)math_round(pes.mouse.origin.x * fb_scale);
+    i32 py = (i32)math_round(pes.mouse.origin.y * fb_scale);
+
+    for (u32 i = faces_len; i > 0; i--) {
+        FaceInst* f = &faces_sorted[i - 1u];
+        if (!face_hit_test(f, px, py))
+            continue;
+
+        hit.valid = true;
+        hit.face = *f;
+        return hit;
+    }
+
+    return hit;
+}
+
+static CellTarget add_target_from_face(const FaceInst* f) {
+    CellTarget target = {
+        .valid = true,
+        .x = f->x,
+        .y = f->y,
+        .z = f->z,
+    };
+
+    switch (face_inst_face(f)) {
+        case FACE_LEFT:  target.y++; break;
+        case FACE_RIGHT: target.x++; break;
+        case FACE_TOP:   target.z++; break;
+    }
+
+    target.valid = voxel_in_bounds(target.x, target.y, target.z)
+                && voxel_read_at(voxel_index(target.x, target.y, target.z)) == 0;
+    return target;
+}
+
+static CellTarget add_target_from_mouse_column(void) {
+    CellTarget target = { 0 };
+    if (tile_w == 0 || tile_h == 0)
+        return target;
+
+    f32 px = pes.mouse.origin.x * fb_scale;
+    f32 py = pes.mouse.origin.y * fb_scale;
+    f32 cx = fb_px_of_dp(camera.x);
+    f32 cy = fb_px_of_dp(camera.y);
+    f32 a = (px - cx) / ((f32)tile_w * 0.5f);
+    f32 b = (py - cy) / ((f32)tile_h * 0.5f);
+    i32 x = (i32)math_floor((a + b) * 0.5f);
+    i32 y = (i32)math_floor((b - a) * 0.5f);
+
+    if ((u32)x >= WORLD_X || (u32)y >= WORLD_Y)
+        return target;
+
+    target.x = x;
+    target.y = y;
+    target.z = 0;
+    target.valid = true;
+
+    for (i32 z = (i32)WORLD_Z - 1; z >= 0; z--) {
+        if (voxel_read_at(voxel_index(x, y, z)) == 0)
+            continue;
+
+        target.z = z + 1;
+        target.valid = target.z < (i32)WORLD_Z;
+        return target;
+    }
+
+    return target;
+}
+
+static CellTarget add_target_from_hover(void) {
+    if (hover_face.valid)
+        return add_target_from_face(&hover_face.face);
+    return add_target_from_mouse_column();
+}
+
+static Color alpha_over(Color dst, Color src) {
+    u32 a = src.a;
+    u32 inv = 255u - a;
+    return rgba(
+        (u8)(((u32)src.r * a + (u32)dst.r * inv) / 255u),
+        (u8)(((u32)src.g * a + (u32)dst.g * inv) / 255u),
+        (u8)(((u32)src.b * a + (u32)dst.b * inv) / 255u),
+        255);
+}
+
+static Color color_alpha(Color c, u8 alpha) {
+    c.a = alpha;
+    return c;
+}
+
+static void blend_pixel(i32 x, i32 y, Color color) {
+    if ((u32)x >= fb_w || (u32)y >= fb_h)
+        return;
+    Color* p = fb_pixels + (u32)y * fb_w + (u32)x;
+    *p = alpha_over(*p, color);
+}
+
+static void blend_stamp(i32 x, i32 y, i32 thickness, Color color) {
+    i32 r = thickness / 2;
+    for (i32 yy = 0; yy < thickness; yy++) {
+        for (i32 xx = 0; xx < thickness; xx++)
+            blend_pixel(x + xx - r, y + yy - r, color);
+    }
+}
+
+static void draw_fb_line(P2 a, P2 b, i32 thickness, Color color) {
+    i32 x0 = a.x;
+    i32 y0 = a.y;
+    i32 x1 = b.x;
+    i32 y1 = b.y;
+    i32 dx = math_abs(x1 - x0);
+    i32 sx = x0 < x1 ? 1 : -1;
+    i32 dy = -math_abs(y1 - y0);
+    i32 sy = y0 < y1 ? 1 : -1;
+    i32 err = dx + dy;
+
+    for (;;) {
+        blend_stamp(x0, y0, thickness, color);
+        if (x0 == x1 && y0 == y1)
+            break;
+
+        i32 e2 = err * 2;
+        if (e2 >= dy) {
+            err += dy;
+            x0 += sx;
+        }
+        if (e2 <= dx) {
+            err += dx;
+            y0 += sy;
+        }
+    }
+}
+
+static void blit_face_blend(const FaceSprite* s, i32 sx, i32 sy, Color color) {
+    i32 dst_x0 = sx + s->off_x;
+    i32 dst_y0 = sy + s->off_y;
+    i32 y0 = 0;
+    i32 y1 = (i32)s->h;
+
+    if (dst_y0 < 0)
+        y0 = -dst_y0;
+    if (dst_y0 + y1 > (i32)fb_h)
+        y1 = (i32)fb_h - dst_y0;
+
+    for (i32 y = y0; y < y1; y++) {
+        i32 dy = dst_y0 + y;
+        i32 x0 = dst_x0 + (i32)s->alpha_x0[y];
+        i32 x1 = dst_x0 + (i32)s->alpha_x1[y];
+
+        if (x0 < 0)
+            x0 = 0;
+        if (x1 > (i32)fb_w)
+            x1 = (i32)fb_w;
+
+        for (i32 x = x0; x < x1; x++)
+            blend_pixel(x, dy, color);
+    }
+}
+
+static void draw_block_overlay(i32 x, i32 y, i32 z, u8 color, f32 z_lift, u8 alpha) {
+    P2 p = iso_project(x, y, z);
+    p.y -= (i32)math_round((f32)block_h * z_lift);
+
+    Color left = color_alpha(shade_face(palette[color - 1u], FACE_LEFT), alpha);
+    Color right = color_alpha(shade_face(palette[color - 1u], FACE_RIGHT), alpha);
+    Color top = color_alpha(shade_face(palette[color - 1u], FACE_TOP), alpha);
+
+    blit_face_blend(&spr_left, p.x, p.y, left);
+    blit_face_blend(&spr_right, p.x, p.y, right);
+    blit_face_blend(&spr_top, p.x, p.y, top);
+}
+
+static void draw_face_outline_edges(FaceKind face, i32 sx, i32 sy, i32 thickness, Color color) {
+    P2 top = { sx, sy };
+    P2 left = { sx - (i32)tile_w / 2, sy + (i32)tile_h / 2 };
+    P2 right = { sx + (i32)tile_w / 2, sy + (i32)tile_h / 2 };
+    P2 left_bottom = { sx - (i32)tile_w / 2, sy + (i32)block_h };
+    P2 right_bottom = { sx + (i32)tile_w / 2, sy + (i32)tile_h / 2 + (i32)block_h };
+    P2 bottom = { sx, sy + (i32)tile_h + (i32)block_h };
+
+    switch (face) {
+        case FACE_TOP:
+            draw_fb_line(top, left, thickness, color);
+            draw_fb_line(top, right, thickness, color);
+            break;
+        case FACE_LEFT:
+            draw_fb_line(left, left_bottom, thickness, color);
+            draw_fb_line(left_bottom, bottom, thickness, color);
+            break;
+        case FACE_RIGHT:
+            draw_fb_line(right, right_bottom, thickness, color);
+            draw_fb_line(bottom, right_bottom, thickness, color);
+            break;
+    }
+}
+
+static void draw_block_outline(i32 x, i32 y, i32 z, bool only_visible_faces) {
+    i32   thickness = (i32)math_max(1, (i32)fb_px_of_dp(2.0f));
+    Color color = rgba(255, 255, 255, 230);
+
+    if (!only_visible_faces) {
+        P2 p = iso_project(x, y, z);
+        draw_face_outline_edges(FACE_TOP, p.x, p.y, thickness, color);
+        draw_face_outline_edges(FACE_LEFT, p.x, p.y, thickness, color);
+        draw_face_outline_edges(FACE_RIGHT, p.x, p.y, thickness, color);
+        return;
+    }
+
+    for (u32 i = 0; i < faces_len; i++) {
+        FaceInst* f = &faces_sorted[i];
+        if (f->x != x || f->y != y || f->z != z)
+            continue;
+        draw_face_outline_edges(face_inst_face(f), f->sx, f->sy, thickness, color);
+    }
+}
+
+static void render_interaction_overlay(void) {
+    if (selected_block.valid)
+        draw_block_outline(selected_block.x, selected_block.y, selected_block.z, true);
+
+    if (interaction_mode == Mode_ADD && add_preview.valid && !falling_block.valid) {
+        draw_block_overlay(
+            add_preview.x, add_preview.y, add_preview.z, selected_palette_slot + 1u, 0.0f, 105);
+        draw_block_outline(add_preview.x, add_preview.y, add_preview.z, false);
+    }
+
+    if (falling_block.valid) {
+        f32 t = clamp_0_1(falling_block.elapsed / FALL_DURATION);
+        f32 z_lift = (1.0f - t) * (1.0f - t) * FALL_HEIGHT;
+        draw_block_overlay(
+            falling_block.x, falling_block.y, falling_block.z, falling_block.color, z_lift, 245);
+    }
+}
+
 static void render_faces(void) {
     for (u32 i = 0; i < faces_len; i++) {
         FaceInst*         f = &faces_sorted[i];
@@ -771,6 +1060,7 @@ static void render(void) {
     build_face_list();
     sort_faces_counting();
     render_faces();
+    render_interaction_overlay();
 
     texture_write(fb_tex, 0, 0, fb_w, fb_h, fb_pixels);
 
@@ -806,6 +1096,21 @@ static void resize_framebuffer(void) {
     }
 }
 
+static void refresh_hover(void) {
+    hover_face = (FaceHit){ 0 };
+    add_preview = (CellTarget){ 0 };
+
+    if (fb_w == 0 || fb_h == 0)
+        return;
+
+    build_face_list();
+    sort_faces_counting();
+
+    hover_face = pick_visible_face();
+    if (interaction_mode == Mode_ADD)
+        add_preview = add_target_from_hover();
+}
+
 static bool update_camera(f32 dt) {
     f32 speed = 150.0f * dt;
 
@@ -836,10 +1141,113 @@ static bool update_camera(f32 dt) {
     return changed;
 }
 
+static bool update_palette_selection(void) {
+    bool changed = false;
+
+    for (u8 i = 0; i < 10; i++) {
+        if (!key_pressed((KeyboardKey)(Key_0 + i)))
+            continue;
+
+        selected_palette_slot = i;
+        changed = true;
+    }
+
+    return changed;
+}
+
+static bool update_falling_block(f32 dt) {
+    if (!falling_block.valid)
+        return false;
+
+    falling_block.elapsed += dt;
+    if (falling_block.elapsed < FALL_DURATION)
+        return true;
+
+    voxel_set(falling_block.x, falling_block.y, falling_block.z, falling_block.color);
+    selected_block = (SelectedBlock){
+        .valid = true,
+        .x = falling_block.x,
+        .y = falling_block.y,
+        .z = falling_block.z,
+    };
+    falling_block = (FallingBlock){ 0 };
+    return true;
+}
+
+static bool handle_mouse_interaction(void) {
+    bool changed = false;
+
+    if (pes.mouse.pressed & MOUSE_SECONDARY) {
+        interaction_mode = interaction_mode == Mode_SELECT ? Mode_ADD : Mode_SELECT;
+        pes_log_debug("blocks mode -> %s", interaction_mode == Mode_SELECT ? "select" : "add");
+        changed = true;
+    }
+
+    refresh_hover();
+
+    if (pes.mouse.pressed) {
+        pes_log_debug(
+            "blocks mouse pressed=%04x held=%04x mode=%s hover=%u add_preview=%u",
+            (u32)pes.mouse.pressed,
+            (u32)pes.mouse.held,
+            interaction_mode == Mode_SELECT ? "select" : "add",
+            (u32)hover_face.valid,
+            (u32)add_preview.valid);
+    }
+
+    if ((pes.mouse.pressed & MOUSE_PRIMARY) && !key_held(Key_Space)) {
+        if (interaction_mode == Mode_SELECT) {
+            selected_block.valid = hover_face.valid;
+            if (hover_face.valid) {
+                selected_block.x = hover_face.face.x;
+                selected_block.y = hover_face.face.y;
+                selected_block.z = hover_face.face.z;
+                pes_log_debug(
+                    "blocks select (%d,%d,%d)",
+                    selected_block.x,
+                    selected_block.y,
+                    selected_block.z);
+            }
+            changed = true;
+        } else if (add_preview.valid && !falling_block.valid) {
+            falling_block = (FallingBlock){
+                .valid = true,
+                .x = add_preview.x,
+                .y = add_preview.y,
+                .z = add_preview.z,
+                .color = selected_palette_slot + 1u,
+                .elapsed = 0.0f,
+            };
+            pes_log_debug(
+                "blocks add (%d,%d,%d) color=%u",
+                falling_block.x,
+                falling_block.y,
+                falling_block.z,
+                (u32)falling_block.color);
+            changed = true;
+        }
+    }
+
+    return changed;
+}
+
 static bool update(f32 dt) {
     bool changed = update_camera(dt);
 
-    pes.mouse.cursor = key_held(Key_Space) ? Cursor_OPEN_HAND : Cursor_DEFAULT;
+    changed = update_falling_block(dt) || changed;
+    changed = update_palette_selection() || changed;
+    changed = handle_mouse_interaction() || changed;
+
+    if (key_held(Key_Space)) {
+        pes.mouse.cursor = Cursor_OPEN_HAND;
+    } else if (interaction_mode == Mode_ADD) {
+        pes.mouse.cursor = add_preview.valid ? Cursor_CROSSHAIR : Cursor_NOT_ALLOWED;
+    } else {
+        pes.mouse.cursor = hover_face.valid ? Cursor_POINTING_HAND : Cursor_DEFAULT;
+    }
+
+    if (pes.events & EV_MOUSE)
+        changed = true;
 
     if (key_pressed(Key_G)) {
         gridlines_enabled = !gridlines_enabled;
