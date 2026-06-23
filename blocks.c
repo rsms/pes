@@ -36,8 +36,8 @@
 #define SHADOW_MAX_DARKEN 70u
 #define MOUSE_PRIMARY     1u
 #define MOUSE_SECONDARY   2u
-#define FALL_DURATION     0.28f
-#define FALL_HEIGHT       10.0f
+#define IMPACT_DURATION   0.32f
+#define IMPACT_PARTICLES  14u
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // types
@@ -89,8 +89,10 @@ typedef struct {
 } FaceHit;
 
 typedef struct {
-    bool valid;
-    i32  x, y, z;
+    bool     valid;
+    i32      x, y, z;
+    bool     contact_valid;
+    FaceInst contact_face;
 } CellTarget;
 
 typedef struct {
@@ -99,11 +101,18 @@ typedef struct {
 } SelectedBlock;
 
 typedef struct {
-    bool valid;
-    i32  x, y, z;
-    u8   color;
-    f32  elapsed;
-} FallingBlock;
+    f32 x, y;
+    f32 vx, vy;
+    u8  life;
+} ImpactParticle;
+
+typedef struct {
+    bool           valid;
+    i32            x, y, z;
+    u8             color;
+    f32            elapsed;
+    ImpactParticle particle[IMPACT_PARTICLES];
+} ImpactAnim;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // global state
@@ -147,8 +156,9 @@ static InteractionMode interaction_mode = Mode_SELECT;
 static FaceHit         hover_face;
 static CellTarget      add_preview;
 static SelectedBlock   selected_block;
-static FallingBlock    falling_block;
+static ImpactAnim      impact_anim;
 static u8              selected_palette_slot = 1;
+static Vec2            viewport_shake;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -309,8 +319,8 @@ static void voxel_set(i32 x, i32 y, i32 z, u8 color) {
 }
 
 static P2 iso_project(i32 x, i32 y, i32 z) {
-    i32 cx = (i32)fb_px_of_dp(camera.x);
-    i32 cy = (i32)fb_px_of_dp(camera.y);
+    i32 cx = (i32)fb_px_of_dp(camera.x + viewport_shake.x);
+    i32 cy = (i32)fb_px_of_dp(camera.y + viewport_shake.y);
     return (P2){
         cx + (x - y) * (i32)(tile_w / 2),
         cy + (x + y) * (i32)(tile_h / 2) - z * (i32)block_h,
@@ -833,6 +843,8 @@ static CellTarget add_target_from_face(const FaceInst* f) {
 
     target.valid = voxel_in_bounds(target.x, target.y, target.z)
                 && voxel_read_at(voxel_index(target.x, target.y, target.z)) == 0;
+    target.contact_valid = target.valid;
+    target.contact_face = *f;
     return target;
 }
 
@@ -843,8 +855,8 @@ static CellTarget add_target_from_mouse_column(void) {
 
     f32 px = pes.mouse.origin.x * fb_scale;
     f32 py = pes.mouse.origin.y * fb_scale;
-    f32 cx = fb_px_of_dp(camera.x);
-    f32 cy = fb_px_of_dp(camera.y);
+    f32 cx = fb_px_of_dp(camera.x + viewport_shake.x);
+    f32 cy = fb_px_of_dp(camera.y + viewport_shake.y);
     f32 a = (px - cx) / ((f32)tile_w * 0.5f);
     f32 b = (py - cy) / ((f32)tile_h * 0.5f);
     i32 x = (i32)math_floor((a + b) * 0.5f);
@@ -960,9 +972,8 @@ static void blit_face_blend(const FaceSprite* s, i32 sx, i32 sy, Color color) {
     }
 }
 
-static void draw_block_overlay(i32 x, i32 y, i32 z, u8 color, f32 z_lift, u8 alpha) {
+static void draw_block_overlay(i32 x, i32 y, i32 z, u8 color, u8 alpha) {
     P2 p = iso_project(x, y, z);
-    p.y -= (i32)math_round((f32)block_h * z_lift);
 
     Color left = color_alpha(shade_face(palette[color - 1u], FACE_LEFT), alpha);
     Color right = color_alpha(shade_face(palette[color - 1u], FACE_RIGHT), alpha);
@@ -971,6 +982,28 @@ static void draw_block_overlay(i32 x, i32 y, i32 z, u8 color, f32 z_lift, u8 alp
     blit_face_blend(&spr_left, p.x, p.y, left);
     blit_face_blend(&spr_right, p.x, p.y, right);
     blit_face_blend(&spr_top, p.x, p.y, top);
+}
+
+static void draw_preview_shadow(const CellTarget* target, u8 alpha) {
+    if (target->contact_valid) {
+        FaceKind          face = face_inst_face(&target->contact_face);
+        const FaceSprite* s = sprite_for_face(face);
+        blit_face_blend(s, target->contact_face.sx, target->contact_face.sy, rgba(0, 0, 0, alpha));
+        return;
+    }
+
+    if (target->z <= 0)
+        return;
+
+    i32 support_z = target->z - 1;
+    if (!voxel_in_bounds(target->x, target->y, support_z)
+        || voxel_read_at(voxel_index(target->x, target->y, support_z)) == 0)
+    {
+        return;
+    }
+
+    P2 p = iso_project(target->x, target->y, support_z);
+    blit_face_blend(&spr_top, p.x, p.y, rgba(0, 0, 0, alpha));
 }
 
 static void draw_face_outline_edges(FaceKind face, i32 sx, i32 sy, i32 thickness, Color color) {
@@ -1017,22 +1050,117 @@ static void draw_block_outline(i32 x, i32 y, i32 z, bool only_visible_faces) {
     }
 }
 
+static f32 impact_unit(u32 seed) {
+    seed ^= seed >> 16u;
+    seed *= 0x7feb352du;
+    seed ^= seed >> 15u;
+    seed *= 0x846ca68bu;
+    seed ^= seed >> 16u;
+    return (f32)(seed & 0xffffu) / 65535.0f;
+}
+
+static void start_impact(i32 x, i32 y, i32 z, u8 color) {
+    impact_anim = (ImpactAnim){
+        .valid = true,
+        .x = x,
+        .y = y,
+        .z = z,
+        .color = color,
+        .elapsed = 0.0f,
+    };
+
+    P2  base = iso_project(x, y, z > 0 ? z - 1 : z);
+    u32 seed = (u32)(x * 73856093) ^ (u32)(y * 19349663) ^ (u32)(z * 83492791);
+
+    for (u32 i = 0; i < IMPACT_PARTICLES; i++) {
+        f32 r0 = impact_unit(seed + i * 7u);
+        f32 r1 = impact_unit(seed + i * 11u + 3u);
+        f32 r2 = impact_unit(seed + i * 13u + 5u);
+        f32 side = r0 < 0.5f ? -1.0f : 1.0f;
+        f32 speed = fb_px_of_dp(30.0f + r1 * 45.0f);
+
+        impact_anim.particle[i] = (ImpactParticle){
+            .x = (f32)base.x + (r1 - 0.5f) * (f32)tile_w * 0.75f,
+            .y = (f32)base.y + (f32)tile_h * 0.55f + (r2 - 0.5f) * (f32)tile_h * 0.55f,
+            .vx = side * speed * (0.45f + r2 * 0.55f),
+            .vy = -speed * (0.25f + r0 * 0.35f),
+            .life = (u8)(210u + (u32)(r2 * 45.0f)),
+        };
+    }
+}
+
+static bool update_impact(f32 dt) {
+    if (!impact_anim.valid)
+        return false;
+
+    impact_anim.elapsed += dt;
+    if (impact_anim.elapsed >= IMPACT_DURATION) {
+        impact_anim = (ImpactAnim){ 0 };
+        return true;
+    }
+
+    return true;
+}
+
+static Vec2 impact_shake(void) {
+    if (!impact_anim.valid)
+        return vec2(0.0f, 0.0f);
+
+    f32 t = clamp_0_1(impact_anim.elapsed / IMPACT_DURATION);
+    f32 amp = (1.0f - t) * 2.5f;
+    return vec2(math_sin(t * PI * 34.0f) * amp, math_sin(t * PI * 47.0f) * amp * 0.55f);
+}
+
+static void draw_impact_particles(void) {
+    if (!impact_anim.valid)
+        return;
+
+    f32 t = clamp_0_1(impact_anim.elapsed / IMPACT_DURATION);
+    f32 sx = fb_px_of_dp(viewport_shake.x);
+    f32 sy = fb_px_of_dp(viewport_shake.y);
+    for (u32 i = 0; i < IMPACT_PARTICLES; i++) {
+        ImpactParticle* p = &impact_anim.particle[i];
+        f32             px = p->x + sx + p->vx * impact_anim.elapsed;
+        f32             py = p->y + sy + p->vy * impact_anim.elapsed
+                           + fb_px_of_dp(95.0f) * impact_anim.elapsed * impact_anim.elapsed;
+        f32             prev_px = px - p->vx * 0.035f;
+        f32             prev_py = py - p->vy * 0.035f;
+        u8              alpha = (u8)((f32)p->life * (1.0f - t));
+        i32             size = i < 5 ? 5 : 3;
+        Color           color = i < 5 ? rgba(255, 245, 170, alpha) : rgba(190, 160, 115, alpha);
+
+        draw_fb_line(
+            (P2){ (i32)math_round(prev_px), (i32)math_round(prev_py) },
+            (P2){ (i32)math_round(px), (i32)math_round(py) },
+            size,
+            color);
+    }
+}
+
+static void render_impact_overlay(void) {
+    if (!impact_anim.valid)
+        return;
+
+    f32 t = clamp_0_1(impact_anim.elapsed / IMPACT_DURATION);
+    u8  alpha = (u8)(150.0f * (1.0f - t));
+
+    if (interaction_mode != Mode_ADD)
+        draw_block_outline(impact_anim.x, impact_anim.y, impact_anim.z, false);
+    draw_block_overlay(impact_anim.x, impact_anim.y, impact_anim.z, impact_anim.color, alpha);
+    draw_impact_particles();
+}
+
 static void render_interaction_overlay(void) {
-    if (selected_block.valid)
+    if (interaction_mode != Mode_ADD && selected_block.valid)
         draw_block_outline(selected_block.x, selected_block.y, selected_block.z, true);
 
-    if (interaction_mode == Mode_ADD && add_preview.valid && !falling_block.valid) {
+    if (interaction_mode == Mode_ADD && add_preview.valid) {
+        draw_preview_shadow(&add_preview, 75);
         draw_block_overlay(
-            add_preview.x, add_preview.y, add_preview.z, selected_palette_slot + 1u, 0.0f, 105);
-        draw_block_outline(add_preview.x, add_preview.y, add_preview.z, false);
+            add_preview.x, add_preview.y, add_preview.z, selected_palette_slot + 1u, 105);
     }
 
-    if (falling_block.valid) {
-        f32 t = clamp_0_1(falling_block.elapsed / FALL_DURATION);
-        f32 z_lift = (1.0f - t) * (1.0f - t) * FALL_HEIGHT;
-        draw_block_overlay(
-            falling_block.x, falling_block.y, falling_block.z, falling_block.color, z_lift, 245);
-    }
+    render_impact_overlay();
 }
 
 static void render_faces(void) {
@@ -1056,6 +1184,8 @@ static void render_faces(void) {
 }
 
 static void render(void) {
+    viewport_shake = impact_shake();
+
     clear_fb(rgb(200, 200, 200));
     build_face_list();
     sort_faces_counting();
@@ -1069,6 +1199,8 @@ static void render(void) {
     f32 x = (pes.screen.width - w) * 0.5f;
     f32 y = (pes.screen.height - h) * 0.5f;
     draw_texture(x, y, w, h, fb_tex);
+
+    viewport_shake = vec2(0.0f, 0.0f);
 }
 
 static void resize_framebuffer(void) {
@@ -1155,25 +1287,6 @@ static bool update_palette_selection(void) {
     return changed;
 }
 
-static bool update_falling_block(f32 dt) {
-    if (!falling_block.valid)
-        return false;
-
-    falling_block.elapsed += dt;
-    if (falling_block.elapsed < FALL_DURATION)
-        return true;
-
-    voxel_set(falling_block.x, falling_block.y, falling_block.z, falling_block.color);
-    selected_block = (SelectedBlock){
-        .valid = true,
-        .x = falling_block.x,
-        .y = falling_block.y,
-        .z = falling_block.z,
-    };
-    falling_block = (FallingBlock){ 0 };
-    return true;
-}
-
 static bool handle_mouse_interaction(void) {
     bool changed = false;
 
@@ -1209,21 +1322,23 @@ static bool handle_mouse_interaction(void) {
                     selected_block.z);
             }
             changed = true;
-        } else if (add_preview.valid && !falling_block.valid) {
-            falling_block = (FallingBlock){
+        } else if (add_preview.valid) {
+            u8 color = selected_palette_slot + 1u;
+            voxel_set(add_preview.x, add_preview.y, add_preview.z, color);
+            selected_block = (SelectedBlock){
                 .valid = true,
                 .x = add_preview.x,
                 .y = add_preview.y,
                 .z = add_preview.z,
-                .color = selected_palette_slot + 1u,
-                .elapsed = 0.0f,
             };
+            start_impact(add_preview.x, add_preview.y, add_preview.z, color);
+            refresh_hover();
             pes_log_debug(
                 "blocks add (%d,%d,%d) color=%u",
-                falling_block.x,
-                falling_block.y,
-                falling_block.z,
-                (u32)falling_block.color);
+                selected_block.x,
+                selected_block.y,
+                selected_block.z,
+                (u32)color);
             changed = true;
         }
     }
@@ -1234,7 +1349,7 @@ static bool handle_mouse_interaction(void) {
 static bool update(f32 dt) {
     bool changed = update_camera(dt);
 
-    changed = update_falling_block(dt) || changed;
+    changed = update_impact(dt) || changed;
     changed = update_palette_selection() || changed;
     changed = handle_mouse_interaction() || changed;
 
@@ -1243,7 +1358,7 @@ static bool update(f32 dt) {
     } else if (interaction_mode == Mode_ADD) {
         pes.mouse.cursor = add_preview.valid ? Cursor_CROSSHAIR : Cursor_NOT_ALLOWED;
     } else {
-        pes.mouse.cursor = hover_face.valid ? Cursor_POINTING_HAND : Cursor_DEFAULT;
+        pes.mouse.cursor = Cursor_DEFAULT;
     }
 
     if (pes.events & EV_MOUSE)
