@@ -1504,11 +1504,34 @@ static bool handle_mouse_interaction(void) {
     return changed;
 }
 
+static bool handle_keyboard_interaction(void) {
+    if (!key_pressed(Key_Backspace) && !key_pressed(Key_Delete) && !key_held(Key_Backspace)
+        && !key_held(Key_Delete))
+    {
+        return false;
+    }
+    if (!selected_block.valid)
+        return false;
+
+    i32 x = selected_block.x;
+    i32 y = selected_block.y;
+    i32 z = selected_block.z;
+
+    if (voxel_in_bounds(x, y, z) && voxel_read_at(voxel_index(x, y, z)) != 0)
+        voxel_clear(x, y, z);
+
+    selected_block = (SelectedBlock){ 0 };
+    refresh_hover();
+    pes_log_debug("blocks delete (%d,%d,%d)", x, y, z);
+    return true;
+}
+
 static bool update(f32 dt) {
     bool changed = update_camera(dt);
 
     changed = update_impact(dt) || changed;
     changed = update_palette_selection() || changed;
+    changed = handle_keyboard_interaction() || changed;
     changed = handle_mouse_interaction() || changed;
 
     if (key_held(Key_Space)) {
