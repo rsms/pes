@@ -958,6 +958,20 @@ static void pes_on_gamepad_event(PBGamepadEvent* ev) {
 }
 
 static void pes_on_pointer_event(PBPointerEvent* ev) {
+    if (ev->inputEvent.event.type == PBEventType_POINTER_DOWN
+        || ev->inputEvent.event.type == PBEventType_POINTER_UP)
+    {
+        pes_log_debug(
+            "pointer %s kind=%u flags=%04x buttons=%04x button=%u pos=(%.1f,%.1f)",
+            ev->inputEvent.event.type == PBEventType_POINTER_DOWN ? "down" : "up",
+            (u32)ev->kind,
+            (u32)ev->flags,
+            (u32)ev->buttons,
+            (u32)ev->button,
+            ev->x,
+            ev->y);
+    }
+
     if (!(ev->flags & PBPointerFlag_PRIMARY))
         return;
     if (ev->kind == PBPointerKind_MOUSE || ev->kind == PBPointerKind_TRACKPAD) {
@@ -966,7 +980,15 @@ static void pes_on_pointer_event(PBPointerEvent* ev) {
         pes.mouse.moved.x += ev->dx;
         pes.mouse.moved.y += ev->dy;
         pes.mouse.held = ev->buttons;
-        pes.mouse.pressed |= ev->buttons;
+        if (ev->inputEvent.event.type == PBEventType_POINTER_DOWN) {
+            pes.mouse.pressed |= ev->buttons;
+            pes_log_debug(
+                "mouse pressed=%04x held=%04x from buttons=%04x button=%u",
+                (u32)pes.mouse.pressed,
+                (u32)pes.mouse.held,
+                (u32)ev->buttons,
+                (u32)ev->button);
+        }
         pes.events |= EV_INPUT | EV_POINTER | EV_MOUSE;
     }
 }
