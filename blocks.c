@@ -35,7 +35,7 @@
 #define PALETTE_COUNT 64u
 
 #define SHADOW_MAX_Z_DIST 12u
-#define SHADOW_MAX_DARKEN 70u
+#define SHADOW_MAX_DARKEN 40u
 
 #define MOUSE_PRIMARY   1u
 #define MOUSE_SECONDARY 2u
@@ -83,7 +83,9 @@ typedef struct {
     i16 sx, sy;
     u8  x, y, z;
     u8  color_face;
-    u32 sort_key;
+    u8  alpha;
+    u8  _unused;
+    u16 sort_key;
 } FaceInst;
 
 typedef enum {
@@ -177,6 +179,8 @@ _Static_assert(FB_SCALE >= 1u, "FB_SCALE must be at least 1");
 _Static_assert(WORLD_X <= 256, "FaceInst x requires WORLD_X <= 256");
 _Static_assert(WORLD_Y <= 256, "FaceInst y requires WORLD_Y <= 256");
 _Static_assert(WORLD_Z <= 256, "FaceInst z requires WORLD_Z <= 256");
+_Static_assert(SORT_KEY_MAX <= 65536u, "FaceInst sort_key requires SORT_KEY_MAX <= 65536");
+_Static_assert(sizeof(FaceInst) == 12u, "FaceInst size affects face-list memory use");
 
 _Static_assert(PALETTE_COUNT <= 1u << VOXEL_COLOR_BITS, "palette does not fit in packed world");
 _Static_assert(SHADOW_MAX_Z_DIST >= 2u, "shadow range must reach the nearest visible blocker");
@@ -649,9 +653,9 @@ static void init_test_world(void) {
     }
 }
 
-static u32 face_sort_key(i32 x, i32 y, i32 z, FaceKind face) {
+static u16 face_sort_key(i32 x, i32 y, i32 z, FaceKind face) {
     u32 face_order = face == FACE_LEFT ? 0u : face == FACE_RIGHT ? 1u : 2u;
-    return ((u32)(x + y + z) << 2) | face_order;
+    return (u16)(((u32)(x + y + z) << 2) | face_order);
 }
 
 static u8 pack_color_face(u8 color, FaceKind face) {
@@ -673,7 +677,7 @@ static FaceKind face_inst_face(const FaceInst* f) {
     return (FaceKind)(f->color_face & FACE_MASK);
 }
 
-static void push_face(i32 x, i32 y, i32 z, FaceKind face, u8 color) {
+static void push_face_alpha(i32 x, i32 y, i32 z, FaceKind face, u8 color, u8 alpha) {
     if (faces_len >= MAX_VISIBLE_FACES)
         return;
 
@@ -685,8 +689,26 @@ static void push_face(i32 x, i32 y, i32 z, FaceKind face, u8 color) {
         .y = (u8)y,
         .z = (u8)z,
         .color_face = pack_color_face(color, face),
+        .alpha = alpha,
         .sort_key = face_sort_key(x, y, z, face),
     };
+}
+
+static void push_face(i32 x, i32 y, i32 z, FaceKind face, u8 color) {
+    push_face_alpha(x, y, z, face, color, 255);
+}
+
+static void emit_preview_faces(void) {
+    if (interaction_mode != Mode_ADD || !add_preview.valid)
+        return;
+
+    u8 color = selected_palette_slot + 1u;
+    push_face_alpha(
+        add_preview.x, add_preview.y, add_preview.z, FACE_TOP, color, PREVIEW_BLOCK_ALPHA);
+    push_face_alpha(
+        add_preview.x, add_preview.y, add_preview.z, FACE_LEFT, color, PREVIEW_BLOCK_ALPHA);
+    push_face_alpha(
+        add_preview.x, add_preview.y, add_preview.z, FACE_RIGHT, color, PREVIEW_BLOCK_ALPHA);
 }
 
 static void emit_visible_faces_for_block(const BlockRef* b) {
@@ -970,6 +992,15 @@ static bool is_selected_face(const FaceInst* f, i32 x, i32 y, i32 z) {
     return f->x == x && f->y == y && f->z == z;
 }
 
+static bool is_add_preview_contact_face(const FaceInst* f) {
+    if (interaction_mode != Mode_ADD || !add_preview.contact_valid || f->alpha != 255)
+        return false;
+
+    const FaceInst* contact = &add_preview.contact_face;
+    return f->x == contact->x && f->y == contact->y && f->z == contact->z
+        && face_inst_face(f) == face_inst_face(contact);
+}
+
 static void mark_selected_surface(
     const FaceSprite* s, i32 sx, i32 sy, bool selected, u8* mask, u32 mask_w, u32 mask_h) {
     i32 dst_x0 = sx + s->off_x;
@@ -1143,16 +1174,6 @@ static void draw_preview_cast_shadow(const CellTarget* target) {
     }
 }
 
-static void draw_preview_contact_shadow(const CellTarget* target) {
-    if (!target->contact_valid)
-        return;
-
-    FaceKind          face = face_inst_face(&target->contact_face);
-    const FaceSprite* s = sprite_for_face(face);
-    Color             color = rgba(0, 0, 0, PREVIEW_CONTACT_SHADOW);
-    blit_face_blend(s, target->contact_face.sx, target->contact_face.sy, color);
-}
-
 static void draw_block_outline(i32 x, i32 y, i32 z, bool only_visible_faces) {
     P2 p = iso_project(x, y, z);
     P2 v[7] = {
@@ -1309,13 +1330,6 @@ static void render_interaction_overlay(void) {
 
     if (interaction_mode == Mode_ADD && add_preview.valid) {
         draw_preview_cast_shadow(&add_preview);
-        draw_block_overlay(
-            add_preview.x,
-            add_preview.y,
-            add_preview.z,
-            selected_palette_slot + 1u,
-            PREVIEW_BLOCK_ALPHA);
-        draw_preview_contact_shadow(&add_preview);
     }
 
     render_impact_overlay();
@@ -1331,13 +1345,21 @@ static void render_faces(void) {
             continue;
 
         Color face_color = shade_face(palette[face_inst_color(f)], face);
-        if (face == FACE_TOP)
+        if (f->alpha == 255 && face == FACE_TOP)
             face_color = darken_color(face_color, top_shadow_darken(f->x, f->y, f->z));
 
-        blit_face(s, f->sx, f->sy, face_color);
+        if (f->alpha == 255) {
+            blit_face(s, f->sx, f->sy, face_color);
+        } else {
+            face_color.a = f->alpha;
+            blit_face_blend(s, f->sx, f->sy, face_color);
+        }
 
-        if (gridlines_enabled)
+        if (f->alpha == 255 && gridlines_enabled)
             blit_face_lines(s, f->sx, f->sy, gridline_color(face_color));
+
+        if (is_add_preview_contact_face(f))
+            blit_face_blend(s, f->sx, f->sy, rgba(0, 0, 0, PREVIEW_CONTACT_SHADOW));
     }
 }
 
@@ -1346,6 +1368,7 @@ static void render(void) {
 
     clear_fb(rgb(200, 200, 200));
     build_face_list();
+    emit_preview_faces();
     sort_faces_counting();
     render_faces();
     render_interaction_overlay();
