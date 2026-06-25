@@ -10,14 +10,16 @@
 #endif
 
 typedef u32 Events;
-#define EV_INPUT      (1llu << 0)
-#define EV_KEYBOARD   (1llu << 1) // EV_INPUT will also be set
-#define EV_POINTER    (1llu << 2) // EV_INPUT will also be set
-#define EV_MOUSE      (1llu << 3) // EV_POINTER and EV_INPUT will also be set
-#define EV_GAMEPAD    (1llu << 4) // EV_INPUT will also be set
-#define EV_ACTIVE     (1llu << 5) // sys.active changed
-#define EV_RESIZE     (1llu << 6) // size and/or scale of screen changed
-#define EV_FULLSCREEN (1llu << 7) // sys.fullscreen changed
+#define EV_ACTIVE     (1u << 0) // sys.active changed
+#define EV_RESIZE     (1u << 1) // size and/or scale of screen changed
+#define EV_FULLSCREEN (1u << 2) // sys.fullscreen changed
+#define EV_INPUT      (1u << 16)
+#define EV_KEYBOARD   (1u << 17) // EV_INPUT will also be set
+#define EV_POINTER    (1u << 18) // EV_INPUT will also be set
+#define EV_MOUSE      (1u << 19) // EV_POINTER and EV_INPUT will also be set
+#define EV_GAMEPAD    (1u << 20) // EV_INPUT will also be set
+#define EV_SCROLL     (1u << 21) // EV_INPUT will also be set
+#define EV_PINCH      (1u << 22) // EV_INPUT will also be set
 
 #define PI          3.14159265358979323846f
 #define HOUR        3600000000000ull
@@ -26,8 +28,6 @@ typedef u32 Events;
 #define MILLISECOND 1000000ull
 #define MICROSECOND 1000ull
 #define NANOSECOND  1ull
-#define WHITE       ((Color){ 255, 255, 255, 255 })
-#define BLACK       ((Color){ 255, 0, 0, 0 })
 
 #define GAMEPAD_COUNT 4u
 
@@ -254,6 +254,9 @@ typedef PBSysWindowCreateTextureFlags TextureFlags;
 enum {
     Texture_STREAMING = PBSysWindowCreateTextureFlag_STREAMING, // optimize for frequent changes
     Texture_NO_FILTER = PBSysWindowCreateTextureFlag_NEAREST,   // disable resampling filter
+    Texture_WRAP_U = PBSysWindowCreateTextureFlag_WRAP_U,       // repeat along U axis
+    Texture_WRAP_V = PBSysWindowCreateTextureFlag_WRAP_V,       // repeat along V axis
+    Texture_REPEAT = Texture_WRAP_U | Texture_WRAP_V,
 };
 
 typedef struct {
@@ -273,7 +276,8 @@ typedef struct {
 } Edges;
 
 typedef struct {
-    f32 x, y, width, height;
+    Vec2 origin;
+    Vec2 size;
 } Rect;
 
 typedef struct {
@@ -337,13 +341,13 @@ struct PES {
         u8  held_count;    // number of keys held
         u8  pressed_count; // number of keys pressed
         u64 held[3];       // currently depressed keys i.e. level triggered (KeyboardKey)
-        u64 pressed[3];    // pressed since last update i.e. edge triggered (KeyboardKey)
+        u64 pressed[3];    // pressed since last pes_poll i.e. edge triggered (KeyboardKey)
     } keyboard;
 
     struct {
         u32 deviceId;      // device identifier, stable across reconnects
         u16 held;          // buttons currently pressed (GamepadButton)
-        u16 pressed;       // buttons pressed at least once since last update (GamepadButton)
+        u16 pressed;       // buttons pressed at least once since last pes_poll (GamepadButton)
         u16 have_button;   // GamepadButton bit is set if button is available
         u8  have_axis;     // GamepadAxis bit is set if axis is available
         u8  have_haptics;  // GamepadHaptics bit is set if haptics is available at locality bit
@@ -351,10 +355,13 @@ struct PES {
     } gamepad[GAMEPAD_COUNT];
 
     struct {
-        Vec2   origin;
-        Vec2   moved;   // delta moved since last update
-        u16    held;    // currently depressed buttons (bit 1 = primary, bit 2 = secondary)
-        u16    pressed; // pressed since last update
+        Vec2   origin;       // most recent position
+        Vec2   moved;        // delta moved since last pes_poll
+        Vec2   scrolled;     // delta scrolled since last pes_poll
+        Vec2   pinch_origin; // focus point in window coords since last pes_poll
+        f32    pinch;        // pinch zoom factor
+        u16    held;         // currently depressed buttons (bit 1 = primary, bit 2 = secondary)
+        u16    pressed;      // pressed since last pes_poll
         Cursor cursor;
         bool   visible;
     } mouse;
@@ -393,7 +400,10 @@ Shape        draw_shape_uv(f32 x, f32 y, f32 w, f32 h, Edges uv);
 Texture      draw_set_texture(Texture tex); // NoTexture to clear, returns prev texture
 Shape        draw_texture(f32 x, f32 y, f32 w, f32 h, Texture tex); // with uv {0,0,1,1}
 Shape        draw_circle(Vec2 center_pos, f32 radius);
-static Shape draw_rect(f32 x, f32 y, f32 w, f32 h, Color fill_color);
+static Shape draw_rect(Rect r, Color fill_color);
+static Shape draw_rect_stroke(Rect r, Color stroke_color, f32 thickness);
+static Shape draw_rect_stroke_inner(Rect r, Color stroke_color, f32 thickness);
+static Shape draw_rect_stroke_outer(Rect r, Color stroke_color, f32 thickness);
 void         draw_push(void);
 void         draw_pop(void);
 Transform    draw_get_transform(void);
@@ -417,16 +427,19 @@ void    texture_close(Texture tex);
 void    texture_write(Texture tex, u32 x_px, u32 y_px, u32 w_px, u32 h_px, const Color* pixels);
 Edges   texture_uv_of_rect(f32 tex_width, f32 tex_height, Rect rect);
 
-static Vec2      vec2(f32 x, f32 y);
-static Vec3      vec3(f32 x, f32 y, f32 z);
-static Vec4      vec4(f32 x, f32 y, f32 z, f32 w);
+static void pixels_clear(Color* pixels, u32 w, u32 h, Color color);
+
+static Vec2 vec2(f32 x, f32 y);
+static Vec3 vec3(f32 x, f32 y, f32 z);
+static Vec4 vec4(f32 x, f32 y, f32 z, f32 w);
+static bool vec2_is_zero(Vec2 v);
+static Vec2 vec2_scale(Vec2 v, f32 exponent);
+static Vec2 vec2_add(Vec2 a, Vec2 b);
+
 static Transform transform_identity(void);
 static Transform transform_translate(Transform transform, f32 x, f32 y);
 static Transform transform_scale(Transform transform, f32 x, f32 y);
 static Transform transform_rotate(Transform transform, f32 radians);
-static bool      vec2_is_zero(Vec2 v);
-static Vec2      vec2_scale(Vec2 v, f32 exponent);
-static Vec2      vec2_add(Vec2 a, Vec2 b);
 
 static Edges edges_flip_x(Edges e);
 static Edges edges_flip_y(Edges e);
@@ -468,7 +481,8 @@ static Color rgba(u8 r, u8 g, u8 b, u8 a);
 static Color grey(u8 rgb);              // == rgb(rgb, rgb, rgb);
 Color        hsv(f32 h, f32 s, f32 v);  // 0-360, 0-1, 0-1
 Color        hsl(f32 h, f32 s, f32 l);  // 0-360, 0-1, 0-1
-u64          color_argb16(Color rgba8); // 0xAABBGGRR -> 0xAAAARRRRGGGGBBBB
+static u32   color_abgr32(Color color); // color as 0xAABBGGRR
+u64          color_argb16(Color color); // color as 0xAAAARRRRGGGGBBBB
 
 static f32 px_of_dp(f32 dp_value);
 static f32 dp_of_px(f32 px_value);
@@ -737,10 +751,33 @@ inline static f32 dp_of_px(f32 px_value) {
     return px_value / pes.screen.scale;
 }
 
+inline static u32 color_abgr32(Color color) {
+    return *(u32*)&color;
+}
+
+inline static void pixels_clear(Color* pixels, u32 w, u32 h, Color color) {
+    memset_u32((u32*)pixels, color_abgr32(color), w * h);
+}
+
 ////
 
-inline static Shape draw_rect(f32 x, f32 y, f32 w, f32 h, Color fill_color) {
-    return shape_fill(draw_shape(x, y, w, h), fill_color);
+inline static Shape draw_rect(Rect r, Color fill_color) {
+    return shape_fill(draw_shape(r.origin.x, r.origin.y, r.size.x, r.size.y), fill_color);
+}
+
+inline static Shape draw_rect_stroke(Rect r, Color stroke_color, f32 thickness) {
+    return shape_stroke(
+        draw_shape(r.origin.x, r.origin.y, r.size.x, r.size.y), stroke_color, thickness);
+}
+
+inline static Shape draw_rect_stroke_inner(Rect r, Color stroke_color, f32 thickness) {
+    return shape_stroke_inner(
+        draw_shape(r.origin.x, r.origin.y, r.size.x, r.size.y), stroke_color, thickness);
+}
+
+inline static Shape draw_rect_stroke_outer(Rect r, Color stroke_color, f32 thickness) {
+    return shape_stroke_outer(
+        draw_shape(r.origin.x, r.origin.y, r.size.x, r.size.y), stroke_color, thickness);
 }
 
 #define SIMD_CFUNC                                                                             \

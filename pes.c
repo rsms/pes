@@ -29,7 +29,7 @@ _Static_assert(1u << GamepadHaptics_RIGHT_TRIGGER == PBSysHidHaptics_RIGHT_TRIGG
 
 #define DRAW_TRANSFORM_STACK_CAP 32u
 
-#if __playbit__ > 0x000300
+#if __playbit__ > 0x000301
     #define PES_DRAW_USE_PB_TRANSFORM 1
 #else
     #define PES_DRAW_USE_PB_TRANSFORM 0
@@ -77,6 +77,7 @@ static struct {
     struct {
         Cursor cursor;
         bool   visible;
+        f32    pinch_base;
     } mouse;
 } pes_internal = {
     .mouse.cursor = Cursor_DEFAULT,
@@ -745,12 +746,12 @@ void texture_write(Texture tex, u32 x_px, u32 y_px, u32 w_px, u32 h_px, const Co
 }
 
 Edges texture_uv_of_rect(f32 tex_width, f32 tex_height, Rect rect) {
-    f32 top = rect.y / tex_height;
-    f32 left = rect.x / tex_width;
+    f32 top = rect.origin.y / tex_height;
+    f32 left = rect.origin.x / tex_width;
     return (Edges){
         .top = top,
-        .right = left + (rect.height / tex_width),
-        .bottom = top + (rect.width / tex_height),
+        .right = left + (rect.size.y / tex_width),
+        .bottom = top + (rect.size.x / tex_height),
         .left = left,
     };
 }
@@ -1006,6 +1007,57 @@ static void pes_on_gamepad_event(PBGamepadEvent* ev) {
     }
 }
 
+static void pes_on_scroll_event(PBScrollEvent* ev) {
+    pes_log_debug_event(&ev->inputEvent.event);
+
+    // Sometimes PBScrollPhase_ENDED have no delta.
+    // If all we get in one pes_poll is a zero-delta scroll event, make sure not to signal that
+    // as a scoll event.
+    if (ev->dx == 0.0 && ev->dy == 0.0)
+        return;
+
+    pes.mouse.scrolled.x += ev->dx;
+    pes.mouse.scrolled.y += ev->dy;
+
+    // // average the origin, if it moves across scroll events received during one pes_poll period
+    // if (pes.mouse.gesture_origin.x >= 0.0f) {
+    //     pes.mouse.gesture_origin.x = (pes.mouse.gesture_origin.x + ev->x) * 0.5;
+    //     pes.mouse.gesture_origin.y = (pes.mouse.gesture_origin.y + ev->y) * 0.5;
+    // } else {
+    //     pes.mouse.gesture_origin.x = ev->x;
+    //     pes.mouse.gesture_origin.y = ev->y;
+    // }
+
+    pes.events |= EV_INPUT | EV_SCROLL;
+}
+
+static void pes_on_gesture_event(PBGestureEvent* ev) {
+
+    pes_log_debug_event(&ev->inputEvent.event);
+
+    if (ev->inputEvent.event.type == PBEventType_GESTURE_PINCH) {
+
+        if (ev->phase == PBGesturePhase_BEGAN) {
+            // note: playbit <=0.3.0 does not support PBSysGesturePhase_BEGAN/END (only CHANGED)
+            pes_internal.mouse.pinch_base = ev->scale;
+            pes.mouse.pinch = ev->scale - 1.0f;
+        } else {
+            pes.mouse.pinch = ev->scale - pes_internal.mouse.pinch_base;
+        }
+
+        // average the origin, if it moves across scroll events received during one pes_poll period
+        if (pes.mouse.pinch_origin.x >= 0.0f) {
+            pes.mouse.pinch_origin.x = (pes.mouse.pinch_origin.x + ev->x) * 0.5;
+            pes.mouse.pinch_origin.y = (pes.mouse.pinch_origin.y + ev->y) * 0.5;
+        } else {
+            pes.mouse.pinch_origin.x = ev->x;
+            pes.mouse.pinch_origin.y = ev->y;
+        }
+
+        pes.events |= EV_INPUT | EV_PINCH;
+    }
+}
+
 static void pes_on_pointer_event(PBPointerEvent* ev) {
     if (ev->inputEvent.event.type == PBEventType_POINTER_DOWN
         || ev->inputEvent.event.type == PBEventType_POINTER_UP)
@@ -1084,11 +1136,13 @@ bool pes_poll(f32* delta_time_out) {
     pes.screen.fullscreen = pes_internal.fullscreen;
     pes.keyboard.pressed_count = 0;
     memset(pes.keyboard.pressed, 0, sizeof(pes.keyboard.pressed));
-    pes.mouse.moved.x = 0.0f;
-    pes.mouse.moved.y = 0.0f;
-    pes.mouse.pressed = 0;
     for (u32 i = 0; i < GAMEPAD_COUNT; i++)
         pes.gamepad[i].pressed = 0;
+    memset(&pes.mouse.moved, 0, sizeof(pes.mouse.moved));
+    memset(&pes.mouse.scrolled, 0, sizeof(pes.mouse.scrolled));
+    pes.mouse.pinch_origin = (Vec2){ -1.0f, -1.0f };
+    pes.mouse.pinch = 0;
+    pes.mouse.pressed = 0;
     pes_internal.frame_ready = false;
 
     // check for changes
@@ -1106,7 +1160,7 @@ bool pes_poll(f32* delta_time_out) {
         if UNLIKELY (events_count <= 0)
             return false; // thread is exiting
         for (PBEvent* event = events; events_count--; event = PBEventNext(event)) {
-            // log_event(event);
+            // pes_log_debug_event(event);
             switch (event->type) {
                 case PBEventType_KEY_DOWN:
                 case PBEventType_KEY_UP:   pes_on_keyboard_event((PBKeyboardEvent*)event); break;
@@ -1130,10 +1184,12 @@ bool pes_poll(f32* delta_time_out) {
                     pes_on_pointer_event((PBPointerEvent*)event);
                     break;
 
-                case PBEventType_SCROLL:
+                case PBEventType_SCROLL: pes_on_scroll_event((PBScrollEvent*)event); break;
                 case PBEventType_GESTURE_PAN:
                 case PBEventType_GESTURE_PINCH:
                 case PBEventType_GESTURE_ROTATE:
+                    pes_on_gesture_event((PBGestureEvent*)event);
+                    break;
                 case PBEventType_FILE_PANEL_CLOSED:
                 case PBEventType_INVALID:           break;
             }
