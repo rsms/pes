@@ -2,6 +2,7 @@
 #define Str
 #include <playbit/playbit.h>
 #undef Str
+PB_API_BEGIN
 
 #if PB_DEBUG
     #define WHEN_DEBUG(stmt) stmt
@@ -121,12 +122,12 @@ typedef enum KeyboardKey {
     Key_Right,
     Key_Down,
     Key_Up,
-    Key_Escape,    // ESC
-    Key_Enter,     // RETURN SYMBOL
-    Key_Tab,       // TAB
-    Key_Backspace, // ERASE TO THE LEFT
-    Key_Insert,    // INSERT
-    Key_Delete,    // ERASE TO THE RIGHT
+    Key_Escape,
+    Key_Enter,
+    Key_Tab,
+    Key_Backspace,
+    Key_Insert,
+    Key_Delete,
     Key_Quote,
     Key_Comma,
     Key_Minus,
@@ -168,12 +169,14 @@ typedef enum KeyboardKey {
     Key_LeftShift,
     Key_LeftCtrl,
     Key_LeftAlt,
-    Key_LeftSuper,
+    Key_LeftMeta,
+    Key_LeftCmd = Key_LeftMeta,
 
     Key_RightShift,
     Key_RightCtrl,
     Key_RightAlt,
-    Key_RightSuper,
+    Key_RightMeta,
+    Key_RightCmd = Key_RightMeta,
 
     Key_ScrollLock,
     Key_NumLock,
@@ -378,8 +381,20 @@ bool pes_poll(f32* delta_time_out);
 
 void window_resize(f32 w, f32 h);
 
-static bool key_held(KeyboardKey);
-static bool key_pressed(KeyboardKey);
+static bool key_held(KeyboardKey);       // check if key is currently pressed
+static bool key_pressed(KeyboardKey);    // check if key was pressed since last pes_poll
+int         key_digit_held(void);        // lowest 0-9 key held, -1 if none
+int         key_digit_held_max(void);    // highest 0-9 key held, -1 if none
+int         key_digit_pressed(void);     // lowest 0-9 key pressed, -1 if none
+int         key_digit_pressed_max(void); // highest 0-9 key pressed, -1 if none
+bool        key_shift_held(void);        // left and/or right shift is currently pressed
+bool        key_ctrl_held(void);         // left and/or right ctrl is currently pressed
+bool        key_alt_held(void);          // left and/or right alt is currently pressed
+bool        key_meta_held(void);         // left and/or right meta is currently pressed
+bool        key_shift_pressed(void);     // left and/or right shift pressed since last pes_poll
+bool        key_ctrl_pressed(void);      // left and/or right ctrl pressed since last pes_poll
+bool        key_alt_pressed(void);       // left and/or right alt pressed since last pes_poll
+bool        key_meta_pressed(void);      // left and/or right meta pressed since last pes_poll
 
 static bool gamepad_available(u32 player);
 Str         gamepad_name(u32 player);
@@ -423,7 +438,7 @@ Shape shape_corner_radius4(Shape shape, f32 tl, f32 tr, f32 br, f32 bl);
 #define NoTexture ((Texture){ 0 })
 Texture texture_load(const char* resource_name);
 Texture texture_create(u32 width, u32 height, TextureFlags flags); // 8-bit RGBA (0xAABBGGRR in LE)
-void    texture_close(Texture tex);
+void    texture_close(Texture tex); // no-op if invalid (i.e. if tex.handle=0)
 void    texture_write(Texture tex, u32 x_px, u32 y_px, u32 w_px, u32 h_px, const Color* pixels);
 Edges   texture_uv_of_rect(f32 tex_width, f32 tex_height, Rect r);
 
@@ -834,3 +849,4 @@ inline static Transform transform_rotate(Transform transform, f32 radians) {
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
+PB_API_END

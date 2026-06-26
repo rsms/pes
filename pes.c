@@ -737,7 +737,8 @@ Texture texture_create(u32 width, u32 height, TextureFlags flags) {
 }
 
 void texture_close(Texture tex) {
-    PBTextureDestroy(&tex);
+    if (tex.handle > 0)
+        PBTextureDestroy(&tex);
 }
 
 void texture_write(Texture tex, u32 x_px, u32 y_px, u32 w_px, u32 h_px, const Color* pixels) {
@@ -754,6 +755,73 @@ Edges texture_uv_of_rect(f32 tex_width, f32 tex_height, Rect r) {
         .bottom = top + (r.size.x / tex_height),
         .left = left,
     };
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// keyboard
+
+#define kDigitKeyMask                                                                  \
+    (1u << Key_0 | 1u << Key_1 | 1u << Key_2 | 1u << Key_3 | 1u << Key_4 | 1u << Key_5 \
+     | 1u << Key_6 | 1u << Key_7 | 1u << Key_8 | 1u << Key_9)
+
+int key_digit_held(void) {
+    return PBBitsFindFirstSet((u32)pes.keyboard.held[0] & kDigitKeyMask) - 1;
+}
+
+int key_digit_held_max(void) {
+    return PBBitsFindLastSet((u32)pes.keyboard.held[0] & kDigitKeyMask) - 1;
+}
+
+int key_digit_pressed(void) {
+    return PBBitsFindFirstSet((u32)pes.keyboard.pressed[0] & kDigitKeyMask) - 1;
+}
+
+int key_digit_pressed_max(void) {
+    return PBBitsFindLastSet((u32)pes.keyboard.pressed[0] & kDigitKeyMask) - 1;
+}
+
+inline static u64 pes_key_mask(KeyboardKey key) {
+    const int bit_bucket = key / 64;
+    const int bucket_local_bit = key - bit_bucket * 64;
+    return (u64)1 << bucket_local_bit;
+}
+
+inline static bool pes_key_check2(const u64* bits, KeyboardKey key1, KeyboardKey key2) {
+    assertf(key1 / 64 == key2 / 64, "keys in different bit buckets");
+    const int bit_bucket = key1 / 64;
+    return bits[bit_bucket] & (pes_key_mask(key1) | pes_key_mask(key2));
+}
+
+bool key_shift_held(void) {
+    return pes_key_check2(pes.keyboard.held, Key_LeftShift, Key_RightShift);
+}
+
+bool key_ctrl_held(void) {
+    return pes_key_check2(pes.keyboard.held, Key_LeftCtrl, Key_RightCtrl);
+}
+
+bool key_alt_held(void) {
+    return pes_key_check2(pes.keyboard.held, Key_LeftAlt, Key_RightAlt);
+}
+
+bool key_meta_held(void) {
+    return pes_key_check2(pes.keyboard.held, Key_LeftMeta, Key_RightMeta);
+}
+
+bool key_shift_pressed(void) {
+    return pes_key_check2(pes.keyboard.pressed, Key_LeftShift, Key_RightShift);
+}
+
+bool key_ctrl_pressed(void) {
+    return pes_key_check2(pes.keyboard.pressed, Key_LeftCtrl, Key_RightCtrl);
+}
+
+bool key_alt_pressed(void) {
+    return pes_key_check2(pes.keyboard.pressed, Key_LeftAlt, Key_RightAlt);
+}
+
+bool key_meta_pressed(void) {
+    return pes_key_check2(pes.keyboard.pressed, Key_LeftMeta, Key_RightMeta);
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1286,7 +1354,7 @@ static u32 pes_Key_of_PBKeyboardKey(PBKeyboardKey key) {
         case PBKeyboardKey_LeftShift:      return Key_LeftShift;
         case PBKeyboardKey_LeftCtrl:       return Key_LeftCtrl;
         case PBKeyboardKey_LeftAlt:        return Key_LeftAlt;
-        case PBKeyboardKey_LeftSuper:      return Key_LeftSuper;
+        case PBKeyboardKey_LeftSuper:      return Key_LeftMeta;
         case PBKeyboardKey_MediaNext:      return Key_MediaNext;
         case PBKeyboardKey_MediaPrev:      return Key_MediaPrev;
         case PBKeyboardKey_MediaPlay:      return Key_MediaPlay;
@@ -1342,7 +1410,7 @@ static u32 pes_Key_of_PBKeyboardKey(PBKeyboardKey key) {
         case PBKeyboardKey_RightShift:     return Key_RightShift;
         case PBKeyboardKey_RightCtrl:      return Key_RightCtrl;
         case PBKeyboardKey_RightAlt:       return Key_RightAlt;
-        case PBKeyboardKey_RightSuper:     return Key_RightSuper;
+        case PBKeyboardKey_RightSuper:     return Key_RightMeta;
         case PBKeyboardKey_Menu:           return Key_Menu;
         case PBKeyboardKey_VolumeUp:       return Key_VolumeUp;
         case PBKeyboardKey_VolumeDown:     return Key_VolumeDown;
