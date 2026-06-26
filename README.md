@@ -2,7 +2,7 @@
 
 This is a miniature game engine
 
-See `pes.h` for API and run examples in this directory with `pb run <filename>`, e.g. `pb run bouncing-ball.c`
+See `pes.h` for API and run examples in this directory with `pb run <filename>`, e.g. `pb run examples/bouncing-ball.c`
 
 Some code uses SIMD when available. For WASM this must be enabled manually by passing `-Xc,-msimd128` to `pb`. WASM SIMD is not enabled by default since not all WASM runtimes support the SIMD extension.
 
