@@ -6,6 +6,7 @@ typedef struct {
     u32     tex_line_width;
     u32     size;
     Color   line_color;
+    u8      line_alpha;
 } Grid;
 
 typedef struct {
@@ -49,7 +50,7 @@ static f32 grid_ival_overlap(f32 a0, f32 a1, f32 b0, f32 b1) {
     return math_max(0.0f, math_min(a1, b1) - math_max(a0, b0));
 }
 
-inline static void grid_resize(Grid* grid, f32 tex_line_size, const u32 tex_size) {
+inline static void grid_resize(Grid* grid, Camera camera, f32 tex_line_size, const u32 tex_size) {
     if (!grid->tex.handle)
         grid->tex = texture_create(tex_size, tex_size, Texture_WRAP_U | Texture_WRAP_V);
 
@@ -57,6 +58,7 @@ inline static void grid_resize(Grid* grid, f32 tex_line_size, const u32 tex_size
     f32    half_line_size = tex_line_size * 0.5f;
     f32    x_coverage[tex_size];
     Color  line_color = grid->line_color;
+    f32    line_alpha = (f32)math_round(90.0f * clamp(camera.zoom, 0.0f, 1.0f));
 
     for (u32 x = 0; x < tex_size; x++) {
         f32 start = (f32)x;
@@ -75,8 +77,10 @@ inline static void grid_resize(Grid* grid, f32 tex_line_size, const u32 tex_size
 
         for (u32 x = 0; x < tex_size; x++) {
             f32 alpha = 1.0f - (1.0f - x_coverage[x]) * (1.0f - y_coverage);
-            if (alpha > 0.0f)
-                pixels[y * tex_size + x] = color_with_a(line_color, (u8)math_round(90.0f * alpha));
+            if (alpha > 0.0f) {
+                pixels[y * tex_size + x] = color_with_a(
+                    line_color, (u8)math_round(line_alpha * alpha));
+            }
         }
     }
 
@@ -92,7 +96,7 @@ void grid_draw(Grid* grid, Camera camera) {
 
     if UNLIKELY (!grid->tex.handle || tex_line_width != grid->tex_line_width) {
         grid->tex_line_width = tex_line_width;
-        grid_resize(grid, tex_line_size, tex_size);
+        grid_resize(grid, camera, tex_line_size, tex_size);
     }
 
     f32 u = -camera.origin.x / cell_size;
