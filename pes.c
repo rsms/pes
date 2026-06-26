@@ -745,13 +745,13 @@ void texture_write(Texture tex, u32 x_px, u32 y_px, u32 w_px, u32 h_px, const Co
     PanicOnErr(PBSysTextureWrite(tex.handle, x_px, y_px, pixels, pixels_size, w_px, h_px));
 }
 
-Edges texture_uv_of_rect(f32 tex_width, f32 tex_height, Rect rect) {
-    f32 top = rect.origin.y / tex_height;
-    f32 left = rect.origin.x / tex_width;
+Edges texture_uv_of_rect(f32 tex_width, f32 tex_height, Rect r) {
+    f32 top = r.origin.y / tex_height;
+    f32 left = r.origin.x / tex_width;
     return (Edges){
         .top = top,
-        .right = left + (rect.size.y / tex_width),
-        .bottom = top + (rect.size.x / tex_height),
+        .right = left + (r.size.y / tex_width),
+        .bottom = top + (r.size.x / tex_height),
         .left = left,
     };
 }

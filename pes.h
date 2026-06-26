@@ -425,7 +425,7 @@ Texture texture_load(const char* resource_name);
 Texture texture_create(u32 width, u32 height, TextureFlags flags); // 8-bit RGBA (0xAABBGGRR in LE)
 void    texture_close(Texture tex);
 void    texture_write(Texture tex, u32 x_px, u32 y_px, u32 w_px, u32 h_px, const Color* pixels);
-Edges   texture_uv_of_rect(f32 tex_width, f32 tex_height, Rect rect);
+Edges   texture_uv_of_rect(f32 tex_width, f32 tex_height, Rect r);
 
 static void pixels_clear(Color* pixels, u32 w, u32 h, Color color);
 
@@ -435,6 +435,8 @@ static Vec4 vec4(f32 x, f32 y, f32 z, f32 w);
 static bool vec2_is_zero(Vec2 v);
 static Vec2 vec2_scale(Vec2 v, f32 exponent);
 static Vec2 vec2_add(Vec2 a, Vec2 b);
+
+static Rect rect(f32 origin_x, f32 origin_y, f32 width, f32 height);
 
 static Transform transform_identity(void);
 static Transform transform_translate(Transform transform, f32 x, f32 y);
@@ -483,6 +485,7 @@ Color        hsv(f32 h, f32 s, f32 v);  // 0-360, 0-1, 0-1
 Color        hsl(f32 h, f32 s, f32 l);  // 0-360, 0-1, 0-1
 static u32   color_abgr32(Color color); // color as 0xAABBGGRR
 u64          color_argb16(Color color); // color as 0xAAAARRRRGGGGBBBB
+static Color color_with_a(Color color, u8 a);
 
 static f32 px_of_dp(f32 dp_value);
 static f32 dp_of_px(f32 px_value);
@@ -669,6 +672,12 @@ inline static Vec2 vec2_add(Vec2 a, Vec2 b) {
 
 ////
 
+inline static Rect rect(f32 origin_x, f32 origin_y, f32 width, f32 height) {
+    return (Rect){ { origin_x, origin_y }, { width, height } };
+}
+
+////
+
 inline static Edges edges_flip_x(Edges e) {
     return (Edges){ e.top, e.left, e.bottom, e.right };
 }
@@ -753,6 +762,11 @@ inline static f32 dp_of_px(f32 px_value) {
 
 inline static u32 color_abgr32(Color color) {
     return *(u32*)&color;
+}
+
+inline static Color color_with_a(Color color, u8 a) {
+    color.a = a;
+    return color;
 }
 
 inline static void pixels_clear(Color* pixels, u32 w, u32 h, Color color) {
