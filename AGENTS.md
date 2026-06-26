@@ -68,7 +68,7 @@ Playbit automation documentation here: `~/playbit/engine/docs/_build/out/tools/a
 Here's how you can build & run a PES program `example.c` with automated interactions:
 
 ```
-./test-remote-control.sh example.c \
+./tools/remote-control.sh example.c \
     '{"command":"wait","ms":250}' \
     '{"command":"key_down","key":"Right","deviceKey":"Right"}' \
     '{"command":"wait","ms":250}' \
@@ -91,7 +91,7 @@ For reusable tests, put one remote-control JSON command per line in a JSONL file
 Then run:
 
 ```
-./test-remote-control.sh example.c tests/example-remote.jsonl
+./tools/remote-control.sh example.c tests/example-remote.jsonl
 ```
 
-`./test-remote-control.sh` launches the Playbit GUI, so agents should request GUI/sandbox-escape permission when running it. Request persistent approval for the bare command prefix `./test-remote-control.sh` without arguments; pass remote-control commands as JSON arguments or in a JSONL file so different test scenarios still match the same approved prefix.
+`./tools/remote-control.sh` launches the Playbit GUI, so agents should request GUI/sandbox-escape permission when running it. Request persistent approval for the bare command prefix `./tools/remote-control.sh` without arguments; pass remote-control commands as JSON arguments or in a JSONL file so different test scenarios still match the same approved prefix.

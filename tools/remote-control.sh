@@ -1,6 +1,6 @@
 #!/bin/bash
 set -euo pipefail
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/.."
 
 _x() { echo "$@"; "$@"; }
 _err() { echo "$0: $@" >&2; exit 1; }
