@@ -473,36 +473,33 @@ static void pes_draw_assert_position_only(Transform transform) {
 }
 
 #else
-
     #define pes_draw_assert_position_only(transform) ((void)0)
-
 #endif
 
+#define require_pes_draw() \
+    (assertf(pes_internal.drawing, "called outside of pes_draw()"), pes_internal.drawing)
+
 void draw_push(void) {
-    PesDrawing* drawing = pes_internal.drawing;
-    assertf(drawing, "called outside of pes_draw()");
+    PesDrawing* drawing = require_pes_draw();
     if UNLIKELY (drawing->transform_stack_len == countof(drawing->transform_stack))
         panic("draw transform stack overflow");
     drawing->transform_stack[drawing->transform_stack_len++] = drawing->transform;
 }
 
 void draw_pop(void) {
-    PesDrawing* drawing = pes_internal.drawing;
-    assertf(drawing, "called outside of pes_draw()");
+    PesDrawing* drawing = require_pes_draw();
     if UNLIKELY (drawing->transform_stack_len == 0)
         panic("draw transform stack underflow");
     drawing->transform = drawing->transform_stack[--drawing->transform_stack_len];
 }
 
 Transform draw_get_transform(void) {
-    PesDrawing* drawing = pes_internal.drawing;
-    assertf(drawing, "called outside of pes_draw()");
+    PesDrawing* drawing = require_pes_draw();
     return drawing->transform;
 }
 
 Transform draw_transform(Transform next) {
-    PesDrawing* drawing = pes_internal.drawing;
-    assertf(drawing, "called outside of pes_draw()");
+    PesDrawing* drawing = require_pes_draw();
     pes_draw_assert_position_only(next);
     Transform prev = drawing->transform;
     drawing->transform = next;
@@ -510,28 +507,24 @@ Transform draw_transform(Transform next) {
 }
 
 void draw_translate(f32 x, f32 y) {
-    PesDrawing* drawing = pes_internal.drawing;
-    assertf(drawing, "called outside of pes_draw()");
+    PesDrawing* drawing = require_pes_draw();
     drawing->transform = transform_translate(drawing->transform, x, y);
 }
 
 void draw_scale(f32 x, f32 y) {
-    PesDrawing* drawing = pes_internal.drawing;
-    assertf(drawing, "called outside of pes_draw()");
+    PesDrawing* drawing = require_pes_draw();
     drawing->transform = transform_scale(drawing->transform, x, y);
     pes_draw_assert_position_only(drawing->transform);
 }
 
 void draw_rotate(f32 radians) {
-    PesDrawing* drawing = pes_internal.drawing;
-    assertf(drawing, "called outside of pes_draw()");
+    PesDrawing* drawing = require_pes_draw();
     drawing->transform = transform_rotate(drawing->transform, radians);
     pes_draw_assert_position_only(drawing->transform);
 }
 
 Shape draw_shape(f32 x, f32 y, f32 w, f32 h) {
-    PesDrawing* drawing = pes_internal.drawing;
-    assertf(drawing, "called outside of pes_draw()");
+    PesDrawing* drawing = require_pes_draw();
 
     x = px_of_dp(x);
     y = px_of_dp(y);
@@ -588,8 +581,7 @@ Shape draw_circle(Vec2 center_pos, f32 radius) {
 }
 
 Texture draw_set_texture(Texture tex) {
-    PesDrawing* drawing = pes_internal.drawing;
-    assertf(drawing, "called outside of pes_draw()");
+    PesDrawing* drawing = require_pes_draw();
 
     Texture previous_tex = drawing->texture;
     drawing->texture = tex;

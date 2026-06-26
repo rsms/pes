@@ -415,10 +415,9 @@ Shape        draw_shape_uv(f32 x, f32 y, f32 w, f32 h, Edges uv);
 Texture      draw_set_texture(Texture tex); // NoTexture to clear, returns prev texture
 Shape        draw_texture(f32 x, f32 y, f32 w, f32 h, Texture tex); // with uv {0,0,1,1}
 Shape        draw_circle(Vec2 center_pos, f32 radius);
-static Shape draw_rect(Rect r, Color fill_color);
-static Shape draw_rect_stroke(Rect r, Color stroke_color, f32 thickness);
-static Shape draw_rect_stroke_inner(Rect r, Color stroke_color, f32 thickness);
-static Shape draw_rect_stroke_outer(Rect r, Color stroke_color, f32 thickness);
+static Shape draw_rect(Rect r);
+static Shape draw_filled_rect(Rect r, Color fill_color);
+static Shape draw_stroked_rect(Rect r, Color stroke_color, f32 thickness);
 void         draw_push(void);
 void         draw_pop(void);
 Transform    draw_get_transform(void);
@@ -790,23 +789,16 @@ inline static void pixels_clear(Color* pixels, u32 w, u32 h, Color color) {
 
 ////
 
-inline static Shape draw_rect(Rect r, Color fill_color) {
-    return shape_fill(draw_shape(r.origin.x, r.origin.y, r.size.x, r.size.y), fill_color);
+inline static Shape draw_rect(Rect r) {
+    return draw_shape(r.origin.x, r.origin.y, r.size.x, r.size.y);
 }
 
-inline static Shape draw_rect_stroke(Rect r, Color stroke_color, f32 thickness) {
-    return shape_stroke(
-        draw_shape(r.origin.x, r.origin.y, r.size.x, r.size.y), stroke_color, thickness);
+inline static Shape draw_filled_rect(Rect r, Color fill_color) {
+    return shape_fill(draw_rect(r), fill_color);
 }
 
-inline static Shape draw_rect_stroke_inner(Rect r, Color stroke_color, f32 thickness) {
-    return shape_stroke_inner(
-        draw_shape(r.origin.x, r.origin.y, r.size.x, r.size.y), stroke_color, thickness);
-}
-
-inline static Shape draw_rect_stroke_outer(Rect r, Color stroke_color, f32 thickness) {
-    return shape_stroke_outer(
-        draw_shape(r.origin.x, r.origin.y, r.size.x, r.size.y), stroke_color, thickness);
+inline static Shape draw_stroked_rect(Rect r, Color stroke_color, f32 thickness) {
+    return shape_stroke(draw_rect(r), stroke_color, thickness);
 }
 
 #define SIMD_CFUNC                                                                             \

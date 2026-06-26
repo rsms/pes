@@ -12,9 +12,9 @@ void main(void) {
         grid_draw(&grid, camera.origin, camera.zoom);
 
         Shape sh;
-        draw_rect(camera_tr_rect(camera, rect(256, 256, 64, 64)), rgb(255, 200, 30));
-        draw_rect(camera_tr_rect(camera, rect(320, 320, 64, 64)), rgb(225, 90, 60));
-        sh = draw_rect(camera_tr_rect(camera, rect(544, 288, 128, 64)), rgb(100, 90, 240));
+        draw_filled_rect(camera_tr_rect(camera, rect(256, 256, 64, 64)), rgb(255, 200, 30));
+        draw_filled_rect(camera_tr_rect(camera, rect(320, 320, 64, 64)), rgb(225, 90, 60));
+        sh = draw_filled_rect(camera_tr_rect(camera, rect(544, 288, 128, 64)), rgb(100, 90, 240));
         shape_corner_radius(sh, 9999);
         sh->opacity = 0.5;
     }
