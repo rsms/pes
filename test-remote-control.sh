@@ -7,19 +7,18 @@ _err() { echo "$0: $@" >&2; exit 1; }
 
 [ $# -gt 0 ] || {
     cat << END
+Build and then run a program in automation mode
 Usage:
 
-{
-    printf '%s\n' '{"command":"wait","ms":250}'
-    printf '%s\n' '{"command":"key_down","key":"Right","deviceKey":"Right"}'
-    printf '%s\n' '{"command":"wait","ms":250}'
-    printf '%s\n' '{"command":"screenshot","id":"abc123","format":"png"}'
-} | $0 <game>"
+$0 <source> '{"command":"wait","ms":250}' '{"command":"screenshot","id":"abc123","format":"png"}'
+$0 <source> <commands.jsonl>
+$0 <source> < commands.jsonl
 
 END
 }
 
 game=$1
+shift
 game_name=$(basename $game .c)
 
 if [ -z "${pb_app:-}" ]; then
@@ -35,8 +34,14 @@ fi
 PB_ARGS=( build -j1 --debug -Xc,-DPES_DEBUG=1 )
 [ -f .clangd ] && PB_ARGS+=( --compdb=o/compile_commands.json )
 
-# save the script's stdin
-exec 3<&0
+# save the script's input
+if [ $# -gt 0 ] && [[ "$1" == \{* ]]; then
+    exec 3< <(printf '%s\n' "$@")
+elif [ $# -gt 0 ]; then
+    exec 3<"$1"
+else
+    exec 3<&0
+fi
 
 _x $pb "${PB_ARGS[@]}" -Xc,-msimd128 -o o/$game_name.wasm $game < /dev/null
 

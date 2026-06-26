@@ -9,6 +9,7 @@ game=${1:-}; [ $# -eq 0 ] || shift
 release=0
 native=0
 mtl_debug=0
+pes_debug=0
 run=1
 pb=
 pb_app=
@@ -54,7 +55,8 @@ if command -v clang-format >/dev/null && ! [ -f .clangd -a .clangd -nt tools/cla
 fi
 
 PB_ARGS=( build )
-[ $debug = 1 ] && PB_ARGS+=( -j1 --debug -Xc,-DPES_DEBUG=1 )
+[ $debug = 1 ] && PB_ARGS+=( -j1 --debug )
+[ $pes_debug = 1 ] && PB_ARGS+=( -Xc,-DPES_DEBUG=1 )
 [ -f .clangd ] && PB_ARGS+=( --compdb=o/compile_commands.json )
 
 if [ $mtl_debug = 1 ]; then

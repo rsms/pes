@@ -65,15 +65,33 @@ Required:
 Playbit supports automated testing of interactive GUI programs via its "remote control" feature.
 Playbit automation documentation here: `~/playbit/engine/docs/_build/out/tools/automation.md`
 
-Here's how you can test a PES program `example.c`:
+Here's how you can build & run a PES program `example.c` with automated interactions:
 
 ```
-{
-    printf '%s\n' '{"command":"wait","ms":250}'
-    printf '%s\n' '{"command":"key_down","key":"Right","deviceKey":"Right"}'
-    printf '%s\n' '{"command":"wait","ms":250}'
-    printf '%s\n' '{"command":"key_up","key":"Right","deviceKey":"Right"}'
-    printf '%s\n' '{"command":"wait","ms":2500}'
-    printf '%s\n' '{"command":"screenshot","id":"a","format":"png"}'
-} | ./test-remote-control.sh example.c
+./test-remote-control.sh example.c \
+    '{"command":"wait","ms":250}' \
+    '{"command":"key_down","key":"Right","deviceKey":"Right"}' \
+    '{"command":"wait","ms":250}' \
+    '{"command":"key_up","key":"Right","deviceKey":"Right"}' \
+    '{"command":"wait","ms":2500}' \
+    '{"command":"screenshot","id":"a","format":"png"}'
 ```
+
+For reusable tests, put one remote-control JSON command per line in a JSONL file:
+
+```
+{"command":"wait","ms":250}
+{"command":"key_down","key":"Right","deviceKey":"Right"}
+{"command":"wait","ms":250}
+{"command":"key_up","key":"Right","deviceKey":"Right"}
+{"command":"wait","ms":2500}
+{"command":"screenshot","id":"a","format":"png"}
+```
+
+Then run:
+
+```
+./test-remote-control.sh example.c tests/example-remote.jsonl
+```
+
+`./test-remote-control.sh` launches the Playbit GUI, so agents should request GUI/sandbox-escape permission when running it. Request persistent approval for the bare command prefix `./test-remote-control.sh` without arguments; pass remote-control commands as JSON arguments or in a JSONL file so different test scenarios still match the same approved prefix.
