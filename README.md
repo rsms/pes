@@ -42,20 +42,3 @@ void main(void) {
     }
 }
 ```
-
-## Testing
-
-1. Build with `pb build --debug -j1 -Xc,-DPES_DEBUG=1 -o o/example.wasm example.c`
-2. Run with [automation](https://playbit.app/docs/tools/automation)
-
-```
-{
-    printf '%s\n' '{"command":"wait","ms":250}'
-    printf '%s\n' '{"command":"key_down","key":"Right","deviceKey":"Right"}'
-    printf '%s\n' '{"command":"wait","ms":250}'
-    printf '%s\n' '{"command":"key_up","key":"Right","deviceKey":"Right"}'
-    printf '%s\n' '{"command":"wait","ms":2500}'
-    printf '%s\n' '{"command":"screenshot","id":"a","format":"png"}'
-} | /Applications/Playbit.app/Contents/MacOS/Playbit \
-    --remote-control o/example.wasm
-```
