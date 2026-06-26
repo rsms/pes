@@ -1,5 +1,5 @@
-#include "pes.h"
-#include "pes.c"
+#include "../pes.h"
+#include "../pes.c"
 
 f32   radius = 17;
 Color color = { 255, 80, 0, 255 };

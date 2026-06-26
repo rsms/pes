@@ -1,5 +1,5 @@
-#include "pes.h"
-#include "pes.c"
+#include "../pes.h"
+#include "../pes.c"
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // constants
@@ -1535,7 +1535,6 @@ static bool update(f32 dt) {
 void main(void) {
     pes_init("Blocks", 0, 0, rgb(30, 30, 30));
     window_resize(WINDOW_W_DP, WINDOW_H_DP);
-    log("__playbit__ %06x", __playbit__);
 
     init_test_world();
 

@@ -70,8 +70,8 @@ static void camera_update(Camera* camera, f32 scroll_zoom_exp, f32 pinch_exp, f3
         }
     }
 
-    // touch pinch -> zoom
-    if (pes.events & EV_PINCH)
+    // touch pinch -> zoom (only available in Playbit >=0.3.1)
+    if ((pes.events & EV_PINCH) && __playbit__ >= 0x000301)
         camera_adjust_zoom(camera, pes.mouse.pinch * pinch_exp, pes.mouse.pinch_origin);
 
     // SHIFT+1..8 -> set zoom level

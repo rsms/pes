@@ -1,5 +1,5 @@
-#include "pes.h"
-#include "pes.c"
+#include "../pes.h"
+#include "../pes.c"
 
 Vec2  pos = { 100, 100 }, vel = { 2, 4 };
 Color color = { 255, 200, 120, 255 };

@@ -51,9 +51,9 @@ Required:
 
 ## 4) Building and testing
 
-- Use `./dev.sh run=0 <source>` to build
-- Use `./dev.sh <source>` to build and run (warning: interactive GUI)
-- Use `./test.sh` to run test suite
+- Use `./tools/dev.sh run=0 <source>` to build
+- Use `./tools/dev.sh <source>` to build and run (warning: interactive GUI)
+- Use `./tools/test.sh` to run test suite
 - There's no libc. We are writing this for the Playbit platform only.
 - Playbit runtime docs are avilable at `~/playbit/engine/docs/_build/out/runtime/api.md`
 - Playbit C library docs are avilable at `~/playbit/engine/docs/_build/out/c/api.md`

@@ -1,5 +1,5 @@
-#include "pes.h"
-#include "pes.c"
+#include "../pes.h"
+#include "../pes.c"
 
 typedef struct {
     Vec2  pos;

@@ -1,5 +1,5 @@
-#include "pes.h"
-#include "pes.c"
+#include "../pes.h"
+#include "../pes.c"
 /*
     +-----------------+
     |   OTHER GOAL    |
@@ -79,12 +79,12 @@ void main(void) {
         if (pes.events & EV_RESIZE)
             resize();
 
-        draw_rect(100, 100, 100, 100, rgb(255, 0, 0));
+        draw_rect(rect(100, 100, 100, 100), rgb(255, 0, 0));
         draw_push();
         draw_translate(200, 200);
-        draw_rect(120, 120, 100, 100, rgb(0, 255, 0));
+        draw_rect(rect(120, 120, 100, 100), rgb(0, 255, 0));
         draw_pop();
-        draw_rect(130, 130, 100, 100, rgb(0, 255, 255));
+        draw_rect(rect(130, 130, 100, 100), rgb(0, 255, 255));
 
         // // draw scene background
         // f32   sc = g.scene.scale, sx = g.scene.pos.x, sy = g.scene.pos.y;

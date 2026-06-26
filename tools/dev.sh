@@ -1,6 +1,6 @@
 #!/bin/bash
 set -euo pipefail
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/.."
 
 _x() { echo "$@"; "$@"; }
 _err() { echo "$0: $@" >&2; exit 1; }
@@ -11,8 +11,8 @@ native=0
 mtl_debug=0
 pes_debug=0
 run=1
-pb=
 pb_app=
+pb=
 
 # cli arg set shell script variables: name[=value]
 [ "$*" = "--help" -o -z "$game" ] && { echo "Usage: $0 <game> [var[=value] ...]"; exit 0; };

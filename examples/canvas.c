@@ -1,7 +1,7 @@
-#include "pes.h"
-#include "pes.c"
-#include "lib/camera_2d.h"
-#include "lib/grid_2d.h"
+#include "../pes.h"
+#include "../pes.c"
+#include "../lib/camera_2d.h"
+#include "../lib/grid_2d.h"
 
 void main(void) {
     pes_init("Scroll", 0, 0, rgb(200, 200, 200));
