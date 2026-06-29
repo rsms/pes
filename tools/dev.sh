@@ -11,6 +11,7 @@ native=0
 mtl_debug=0
 pes_debug=0
 run=1
+format=
 pb_app=
 pb=
 
@@ -42,10 +43,10 @@ if [ -z "$pb" ]; then
     [ -x "$pb" ] || pb=$pb_app/Contents/SharedSupport/bin/pb
 fi
 
-if [ -d .git ] && command -v clang-format >/dev/null; then
+if [ "$format" != 0 ] && [ -d .git ] && command -v clang-format >/dev/null; then
     # ignore files which have "linguist-generated" or "linguist-vendored" in .gitattributes
     clang-format --Werror --style=file:tools/clang-format.yaml \
-        -i $(ls *.c *.h |
+        -i pes.h pes.c $(ls lib/*.h examples/*.c |
              git check-attr --stdin linguist-generated linguist-vendored |
              grep -F ': unspecified' | cut -d: -f1 | sort -u)
 fi

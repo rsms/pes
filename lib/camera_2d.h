@@ -27,7 +27,7 @@ PB_API_BEGIN
 
 typedef struct {
     Vec2 origin;
-    f32  zoom; // 1.0 = 100%
+    f32  zoom;               // 1.0 = 100%
     f32  zoom_min, zoom_max; // limit zoom value to range [zoom_min-zoom_max]
 } Camera;
 

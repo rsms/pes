@@ -7,7 +7,7 @@
 #endif
 
 _Static_assert(
-    offsetof(Gamepad, have_button) % 4 == 0,
+    offsetof(struct PES, gamepad[0].have_button) % 4 == 0,
     "can load {have_button,have_axis,have_haptics} as u32");
 
 _Static_assert(1u << GamepadHaptics_DEFAULT == PBSysHidHaptics_DEFAULT, "");
@@ -47,38 +47,57 @@ _Static_assert(1u << GamepadHaptics_RIGHT_TRIGGER == PBSysHidHaptics_RIGHT_TRIGG
     #define pes_log_info(fmt, ...) ((void)0)
 #endif
 
-typedef struct PesDrawing {
+typedef struct {
+    PBSysHandle handle;
+    u8          layout; // 0=none, 1=single_line, 2=multi_line
+    union {
+        i64   key; // positive value means `ptr`, negative value is verbatim
+        char* ptr;
+    } text;
+    u32  text_len;
+    u32  max_wh;     // cached requested max width and height
+    u32  w_px, h_px; // actual width & height
+    Font font;
+} PesTextPlan;
+
+typedef struct {
     Color     clear_color;
     u32       shapes_len;
     u32       instrs_len;
+    u32       texts_len;
     u32       shape_run_len;
+    u32       text_run_len;
     Texture   texture; // current texture, from draw_set_texture
     Transform transform;
     Transform transform_stack[DRAW_TRANSFORM_STACK_CAP];
     u32       transform_stack_len;
 
-    // starting at 'shapes', the remainder of this struct data is uninitialized
+    // starting at 'shapes', the remainder of this struct is uninitialized
     PBSysWindowRendererShapeItem   shapes[512];
-    PBSysWindowRendererInstruction instrs[512];
+    PBSysWindowRendererTextItem    texts[32];
+    PesTextPlan                    text_plans[32]; // text_plans[idx] <–> texts[idx]
+    PBSysWindowRendererInstruction instrs[256];
 } PesDrawing;
 
 static struct {
-    bool                 screen_draw; // screen_draw() called since last pes_draw() call
-    bool                 frame_ready; // true if we have seen a FRAME_SYNC event but not yet drawn
-    bool                 draw;        // should call pes_draw (even if pes.draw==false)
-    bool                 done_first_draw;
-    bool                 app_active;
-    bool                 fullscreen;
-    PBWindow             window;
-    PBTimer              update_timer;
-    PBTime               update_time; // last time pes_update was called
-    PesDrawing* nullable drawing;
-    Events               pending_events;
+    bool     screen_draw; // screen_draw() called since last pes_draw() call
+    bool     frame_ready; // true if we have seen a FRAME_SYNC event but not yet drawn
+    bool     draw;        // should call pes_draw (even if pes.draw==false)
+    bool     app_active;
+    bool     fullscreen;
+    PBWindow window;
+    PBTimer  update_timer;
+    PBTime   update_time; // last time pes_update was called
+    Events   pending_events;
+
     struct {
         Cursor cursor;
         bool   visible;
         f32    pinch_base;
     } mouse;
+
+    PesDrawing drawing;
+
 } pes_internal = {
     .mouse.cursor = Cursor_DEFAULT,
     .mouse.visible = true,
@@ -180,7 +199,7 @@ void memset_u32(u32* p, u32 value, u32 count) {
 // arena
 
 void* arena_alloc(usize nbyte) {
-    nbyte = PBAlign2(nbyte, 8);
+    nbyte = PBAlign2(nbyte, ARENA_ALIGN);
     usize cap = sizeof(pes.arena.bytes);
     usize avail = cap - pes.arena.used;
     if UNLIKELY (avail < nbyte)
@@ -197,7 +216,7 @@ void* arena_allocz(usize nbyte) {
 }
 
 void arena_free(void* ptr, usize nbyte) {
-    nbyte = PBAlign2(nbyte, 8);
+    nbyte = PBAlign2(nbyte, ARENA_ALIGN);
     u8* ptr_end = (u8*)ptr + nbyte;
     assertf(
         (uintptr)ptr >= (uintptr)pes.arena.bytes
@@ -206,6 +225,28 @@ void arena_free(void* ptr, usize nbyte) {
         ptr);
     if (ptr_end == &pes.arena.bytes[sizeof(pes.arena.used)])
         pes.arena.used -= nbyte;
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// str
+
+Str str_fmtv(const char* fmt, va_list args) {
+    usize avail = arena_avail();
+    if UNLIKELY (avail < 8)
+        return kPesEmptyStr;
+    StrHeader* str = (StrHeader*)&pes.arena.bytes[pes.arena.used];
+    int        n = PBVsnprintf(str->chars, avail - 4, fmt, args);
+    pes.arena.used += PBAlign2((usize)n + 4, ARENA_ALIGN);
+    str->len = n;
+    return str->chars;
+}
+
+Str str_fmt(const char* fmt, ...) {
+    va_list args;
+    va_start(args, fmt);
+    Str s = str_fmtv(fmt, args);
+    va_end(args);
+    return s;
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -435,25 +476,37 @@ Color hsl(f32 h, f32 s, f32 l) {
 }
 
 static PBSysWindowRendererInstruction* pes_draw_add_instrs(u32 count) {
-    assert(pes_internal.drawing->instrs_len + count <= countof(pes_internal.drawing->instrs));
-    PBSysWindowRendererInstruction* instr =
-        &pes_internal.drawing->instrs[pes_internal.drawing->instrs_len];
-    pes_internal.drawing->instrs_len += count;
+    PesDrawing* drawing = &pes_internal.drawing;
+    assert(drawing->instrs_len + count <= countof(drawing->instrs));
+    PBSysWindowRendererInstruction* instr = &drawing->instrs[drawing->instrs_len];
+    drawing->instrs_len += count;
     return instr;
 }
 
 static void pes_draw_end_shape_run(void) {
-    assert(pes_internal.drawing->shape_run_len > 0);
+    PesDrawing* drawing = &pes_internal.drawing;
+    assert(drawing->shape_run_len > 0);
     PBSysWindowRendererInstruction* instr = pes_draw_add_instrs(1);
     *instr = (PBSysWindowRendererInstruction){
         .kind = PBSysWindowRendererInstructionKind_SHAPE,
-        .content.runLength = pes_internal.drawing->shape_run_len,
+        .content.runLength = drawing->shape_run_len,
     };
-    pes_internal.drawing->shape_run_len = 0;
+    drawing->shape_run_len = 0;
+}
+
+static void pes_draw_end_text_run(void) {
+    PesDrawing* drawing = &pes_internal.drawing;
+    assert(drawing->text_run_len > 0);
+    PBSysWindowRendererInstruction* instr = pes_draw_add_instrs(1);
+    *instr = (PBSysWindowRendererInstruction){
+        .kind = PBSysWindowRendererInstructionKind_TEXT,
+        .content.runLength = drawing->text_run_len,
+    };
+    drawing->text_run_len = 0;
 }
 
 static Transform pes_draw_transform_px(void) {
-    Transform transform = pes_internal.drawing->transform;
+    Transform transform = pes_internal.drawing.transform;
     transform.o[0] = px_of_dp(transform.o[0]);
     transform.o[1] = px_of_dp(transform.o[1]);
     return transform;
@@ -476,30 +529,27 @@ static void pes_draw_assert_position_only(Transform transform) {
     #define pes_draw_assert_position_only(transform) ((void)0)
 #endif
 
-#define require_pes_draw() \
-    (assertf(pes_internal.drawing, "called outside of pes_draw()"), pes_internal.drawing)
-
 void draw_push(void) {
-    PesDrawing* drawing = require_pes_draw();
+    PesDrawing* drawing = &pes_internal.drawing;
     if UNLIKELY (drawing->transform_stack_len == countof(drawing->transform_stack))
         panic("draw transform stack overflow");
     drawing->transform_stack[drawing->transform_stack_len++] = drawing->transform;
 }
 
 void draw_pop(void) {
-    PesDrawing* drawing = require_pes_draw();
+    PesDrawing* drawing = &pes_internal.drawing;
     if UNLIKELY (drawing->transform_stack_len == 0)
         panic("draw transform stack underflow");
     drawing->transform = drawing->transform_stack[--drawing->transform_stack_len];
 }
 
 Transform draw_get_transform(void) {
-    PesDrawing* drawing = require_pes_draw();
+    PesDrawing* drawing = &pes_internal.drawing;
     return drawing->transform;
 }
 
 Transform draw_transform(Transform next) {
-    PesDrawing* drawing = require_pes_draw();
+    PesDrawing* drawing = &pes_internal.drawing;
     pes_draw_assert_position_only(next);
     Transform prev = drawing->transform;
     drawing->transform = next;
@@ -507,32 +557,161 @@ Transform draw_transform(Transform next) {
 }
 
 void draw_translate(f32 x, f32 y) {
-    PesDrawing* drawing = require_pes_draw();
+    PesDrawing* drawing = &pes_internal.drawing;
     drawing->transform = transform_translate(drawing->transform, x, y);
 }
 
 void draw_scale(f32 x, f32 y) {
-    PesDrawing* drawing = require_pes_draw();
+    PesDrawing* drawing = &pes_internal.drawing;
     drawing->transform = transform_scale(drawing->transform, x, y);
     pes_draw_assert_position_only(drawing->transform);
 }
 
 void draw_rotate(f32 radians) {
-    PesDrawing* drawing = require_pes_draw();
+    PesDrawing* drawing = &pes_internal.drawing;
     drawing->transform = transform_rotate(drawing->transform, radians);
     pes_draw_assert_position_only(drawing->transform);
 }
 
+static void pes_text_plan_make(
+    PesTextPlan* text_plan, const char* s, u32 s_len, u32 max_wh, u8 layout, Font font) {
+
+    // // pes_log_debug
+    // {
+    //     PesDrawing* drawing = &pes_internal.drawing;
+    //     pes_log_debug(
+    //         "text[%u] plan init \"%.*s\" (%s changed)",
+    //         drawing->texts_len,
+    //         (int)s_len,
+    //         s,
+    //         (!text_plan->handle)            ? "handle"
+    //         : (text_plan->layout != layout) ? "layout"
+    //         : (max_wh != text_plan->max_wh)
+    //             ? "max_wh"
+    //             : "text");
+    // }
+
+    if (text_plan->handle)
+        PBSysHandleClose(text_plan->handle);
+
+    text_plan->handle = PanicOnErr(PBSysWindowTextplanCreate(
+        pes_internal.window.handle,
+        (const u8*)s,
+        s_len,
+        font.family,
+        (u32)PBRound(64.0f * font.size * pes.screen.scale), // fixed point; 1.0 = 64
+        font.weight,
+        0xffffffff));
+
+    PBTextPlanLayoutFlags flags =
+        (layout == 1) ? (PBTextPlanLayout_ONE_LINE | PBTextPlanLayout_PREFORMATTED)
+                      : PBTextPlanLayout_PREFORMATTED;
+
+    i32 w_px = (i32)(max_wh >> 16);
+    i32 h_px = (i32)(max_wh & 0xffff);
+    PanicOnErr(PBSysTextplanLayout(text_plan->handle, flags, w_px, h_px));
+
+    u64 wh_px = PBSysTextplanGetSize(text_plan->handle);
+    i32 actual_w_px = PBTextplanWidthOfSize(wh_px);
+    i32 actual_h_px = PBTextplanHeightOfSize(wh_px);
+
+    text_plan->layout = layout;
+    text_plan->max_wh = max_wh;
+    text_plan->w_px = w_px > 0 ? PBMin(w_px, actual_w_px) : actual_w_px;
+    text_plan->h_px = h_px > 0 ? PBMin(h_px, actual_h_px) : actual_h_px;
+}
+
+static bool pes_text_plan_key_eq(i64 s_key, const char* s, u32 s_len, PesTextPlan* text_plan) {
+    if (s_key < 0 || text_plan->text.key <= 0) {
+        return s_key == text_plan->text.key;
+    } else {
+        return s_len == text_plan->text_len && memcmp(text_plan->text.ptr, s, s_len) == 0;
+    }
+}
+
+Text draw_textx(Rect frame, Font font, Color color, const char* s, u32 s_len, i64 s_key) {
+    PesDrawing* drawing = &pes_internal.drawing;
+    if UNLIKELY (drawing->texts_len == countof(drawing->texts))
+        panic("too many texts (%u)", drawing->texts_len);
+
+    if (drawing->shape_run_len > 0)
+        pes_draw_end_shape_run();
+
+    // prepare text plan
+    PesTextPlan* text_plan = &drawing->text_plans[drawing->texts_len];
+    u32          w_px = (u32)px_of_dp(PBMax(0.0f, frame.size.x)) & 0xffff;
+    u32          h_px = (u32)px_of_dp(PBMax(0.0f, frame.size.y)) & 0xffff;
+    u32          max_wh = (w_px << 16) | h_px;
+    u8           layout = 1 + (u32)(max_wh != 0);
+
+    bool changed = !text_plan->handle || text_plan->layout != layout || max_wh != text_plan->max_wh
+                || memcmp(&font, &text_plan->font, sizeof(font)) != 0;
+    bool key_eq = pes_text_plan_key_eq(s_key, s, s_len, text_plan);
+
+    if UNLIKELY (changed || !key_eq) {
+        if (!key_eq) {
+            if (s_key > 0) {
+                // pes_log_debug("text[%u] plan copy key", drawing->texts_len);
+                uintptr ptr = (uintptr)text_plan->text.ptr * (uintptr)(text_plan->text.key >= 0);
+                char*   new_ptr = PBMemRealloc(kPBMemGPA, (void*)ptr, s_len);
+                ExpectNotNull(new_ptr);
+                text_plan->text.ptr = new_ptr;
+                text_plan->text_len = s_len;
+                memcpy(new_ptr, s, s_len);
+            } else if (text_plan->text.key > 0) {
+                // pes_log_debug("text[%u] set key value (2)", drawing->texts_len);
+                PBMemFree(kPBMemGPA, text_plan->text.ptr);
+                text_plan->text.key = s_key;
+            } else {
+                // pes_log_debug("text[%u] set key value (1)", drawing->texts_len);
+                text_plan->text.key = s_key;
+            }
+        }
+        text_plan->font = font;
+        pes_text_plan_make(text_plan, s, s_len, max_wh, layout, font);
+    }
+
+    PBSysWindowRendererTextItem* item = &drawing->texts[drawing->texts_len];
+    item->bounds.x = px_of_dp(frame.origin.x);
+    item->bounds.y = px_of_dp(frame.origin.y);
+    item->bounds.z = item->bounds.x + (f32)text_plan->w_px;
+    item->bounds.w = item->bounds.y + (f32)text_plan->h_px;
+    item->textPlan = text_plan->handle;
+    item->overrideColor = color_argb16(color);
+    item->flags = 1; // 1=overrideColor used
+
+    drawing->texts_len++;
+    drawing->text_run_len++;
+
+    return item;
+}
+
+Text draw_textf(Rect frame, Font font, Color color, const char* fmt, ...) {
+    // TODO: use text_plan->text.ptr directly and avoid a copy
+    va_list args;
+    va_start(args, fmt);
+    Str s = str_fmtv(fmt, args);
+    va_end(args);
+
+    Text text = draw_textx(frame, font, color, (const char*)s, str_len(s), (i64)(uintptr)s);
+
+    str_free(s);
+
+    return text;
+}
+
 Shape draw_shape(f32 x, f32 y, f32 w, f32 h) {
-    PesDrawing* drawing = require_pes_draw();
+    PesDrawing* drawing = &pes_internal.drawing;
+    if UNLIKELY (drawing->shapes_len == countof(drawing->shapes))
+        panic("too many shapes (%u)", drawing->shapes_len);
+
+    if (drawing->text_run_len > 0)
+        pes_draw_end_text_run();
 
     x = px_of_dp(x);
     y = px_of_dp(y);
     w = px_of_dp(w);
     h = px_of_dp(h);
-
-    if UNLIKELY (drawing->shapes_len == countof(drawing->shapes))
-        panic("too many shapes (%u)", drawing->shapes_len);
 
     Transform transform = pes_draw_transform_px();
 #if !PES_DRAW_USE_PB_TRANSFORM
@@ -581,14 +760,17 @@ Shape draw_circle(Vec2 center_pos, f32 radius) {
 }
 
 Texture draw_set_texture(Texture tex) {
-    PesDrawing* drawing = require_pes_draw();
+    PesDrawing* drawing = &pes_internal.drawing;
 
     Texture previous_tex = drawing->texture;
     drawing->texture = tex;
 
     if (tex.handle != previous_tex.handle) {
-        if (drawing->shape_run_len > 0)
+        if (drawing->shape_run_len > 0) {
             pes_draw_end_shape_run();
+        } else if (drawing->text_run_len > 0) {
+            pes_draw_end_text_run();
+        }
 
         PBSysWindowRendererInstruction* instr = pes_draw_add_instrs(1);
         *instr = (PBSysWindowRendererInstruction){
@@ -610,39 +792,52 @@ Shape draw_texture(f32 x, f32 y, f32 w, f32 h, Texture tex) {
     return shape;
 }
 
-static void pes_draw_begin(void) {
-    assertf(pes_internal.drawing == NULL, "pes_draw_begin() called twice");
-    pes_internal.drawing = arena_alloc(sizeof(PesDrawing));
-    memset(pes_internal.drawing, 0, offsetof(PesDrawing, shapes));
-    pes_internal.drawing->transform = transform_identity();
+static void pes_draw_reset(void) {
+    memset(&pes_internal.drawing, 0, offsetof(PesDrawing, shapes));
+    pes_internal.drawing.transform = transform_identity();
 }
 
 static void pes_draw_end(void) {
-    PesDrawing* drawing = pes_internal.drawing;
-    assertf(drawing != NULL, "pes_draw_end() called without pes_draw_begin()");
+    PesDrawing* drawing = &pes_internal.drawing;
 
-    if (drawing->shapes_len > 0 || !pes_internal.done_first_draw) {
-        if (drawing->shape_run_len > 0)
-            pes_draw_end_shape_run();
-        // pes_log_debug(
-        //     "render submit shapes=%u instrs=%u", drawing->shapes_len, drawing->instrs_len);
-        PBSysWindowRendererPackage package = {
-            .backgroundColor = color_argb16(pes.screen.clear_color),
-            .shapes = drawing->shapes,
-            .shapesLen = drawing->shapes_len,
-            .shapeSize = sizeof(*package.shapes),
-            .instructions = drawing->instrs,
-            .instructionsLen = drawing->instrs_len,
-            .instructionSize = sizeof(*package.instructions),
-            .textSize = sizeof(*package.texts),
-            .clipSize = sizeof(*package.clips),
-        };
-        PanicOnErr(
-            PBSysWindowRendererPackageWrite(pes_internal.window.handle, &package, sizeof(package)));
+    if (drawing->shapes_len == 0 && drawing->texts_len == 0 && !pes_internal.draw) {
+        return;
     }
 
-    pes_internal.drawing = NULL;
-    pes_internal.done_first_draw = true;
+    if (drawing->shape_run_len > 0) {
+        pes_draw_end_shape_run();
+    } else if (drawing->text_run_len > 0) {
+        pes_draw_end_text_run();
+    }
+
+    // pes_log_debug(
+    //     "render submit shapes=%u texts=%u instrs=%u",
+    //     drawing->shapes_len,
+    //     drawing->texts_len,
+    //     drawing->instrs_len);
+
+    PBSysWindowRendererPackage rpkg = {
+        .backgroundColor = color_argb16(pes.screen.clear_color),
+        .shapes = drawing->shapes,
+        .shapesLen = drawing->shapes_len,
+        .shapeSize = sizeof(*rpkg.shapes),
+        .texts = drawing->texts,
+        .textsLen = drawing->texts_len,
+        .textSize = sizeof(*rpkg.texts),
+        .instructions = drawing->instrs,
+        .instructionsLen = drawing->instrs_len,
+        .instructionSize = sizeof(*rpkg.instructions),
+        .clipSize = sizeof(*rpkg.clips),
+    };
+
+    PanicOnErr(PBSysWindowRendererPackageWrite(pes_internal.window.handle, &rpkg, sizeof(rpkg)));
+
+    pes_internal.draw = false;
+}
+
+void draw_clear(void) {
+    pes_draw_reset();
+    pes_internal.draw = true;
 }
 
 Shape shape_fill(Shape shape, Color color) {
@@ -693,6 +888,30 @@ Shape shape_set_uv(Shape shape, Edges uv) {
     shape->uvMax.x = uv.right;
     shape->uvMax.y = uv.bottom;
     return shape;
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// text
+
+void text_set_origin(Text text, Vec2 origin) {
+    f32 w = text->bounds.z - text->bounds.x;
+    f32 h = text->bounds.z - text->bounds.x;
+    text->bounds.x = px_of_dp(origin.x);
+    text->bounds.y = px_of_dp(origin.y);
+    text->bounds.z = text->bounds.x + w;
+    text->bounds.w = text->bounds.y + h;
+}
+
+void text_set_size(Text text, Vec2 size) {
+    text->bounds.z = text->bounds.x + px_of_dp(size.x);
+    text->bounds.w = text->bounds.y + px_of_dp(size.y);
+}
+
+void text_set_bounds(Text text, Rect bounds) {
+    text->bounds.x = px_of_dp(bounds.origin.x);
+    text->bounds.y = px_of_dp(bounds.origin.y);
+    text->bounds.z = text->bounds.x + px_of_dp(bounds.size.x);
+    text->bounds.w = text->bounds.y + px_of_dp(bounds.size.y);
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1034,7 +1253,7 @@ static void pes_on_gamepad_event(PBGamepadEvent* ev) {
     {
         bool pressed = ev->inputEvent.event.type == PBEventType_GAMEPAD_BUTTON_DOWN;
 
-        _Static_assert(offsetof(Gamepad, held) % 4 == 0, "can load as aligned u32");
+        _Static_assert(offsetof(struct PES, gamepad[0].held) % 4 == 0, "can load as aligned u32");
         u32 prev_button_state = *(u32*)&pes.gamepad[idx].held;
 
         bit_toggle(&pes.gamepad[idx].held, ev->control, pressed);
@@ -1173,6 +1392,7 @@ void pes_init(const char* title, f32 w, f32 h, Color bg) {
     pes_window_read_info();
     pes.screen.clear_color = bg;
     pes_internal.pending_events = EV_RESIZE;
+    pes_internal.draw = true;
 }
 
 void window_resize(f32 w, f32 h) {
@@ -1185,8 +1405,7 @@ void window_resize(f32 w, f32 h) {
 bool pes_poll(f32* delta_time_out) {
     assert_pes_initialized();
 
-    if (pes_internal.drawing)
-        pes_draw_end();
+    pes_draw_end();
 
     // reset
     pes.events = pes_internal.pending_events;
@@ -1256,6 +1475,9 @@ bool pes_poll(f32* delta_time_out) {
         }
     }
 
+    // reset arena (used for events)
+    pes.arena.used = 0;
+
     // check for state changes
     pes.events = flag_toggle(pes.events, EV_ACTIVE, pes.app_active != pes_internal.app_active);
     pes.app_active = pes_internal.app_active;
@@ -1264,8 +1486,8 @@ bool pes_poll(f32* delta_time_out) {
         pes.events, EV_FULLSCREEN, pes.screen.fullscreen != pes_internal.fullscreen);
     pes.screen.fullscreen = pes_internal.fullscreen;
 
-    // allocate space for drawing in arena
-    pes_draw_begin();
+    // reset drawing
+    pes_draw_reset();
 
     // update time
     pes.time = PBTimeNow();

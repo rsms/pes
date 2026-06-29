@@ -10,6 +10,8 @@ PB_API_BEGIN
     #define WHEN_DEBUG(stmt)
 #endif
 
+#define FMT_ATTR(fmtargno, argsargno) PB_FMT_ATTR(printf, fmtargno, argsargno)
+
 typedef u32 Events;
 #define EV_ACTIVE     (1u << 0) // sys.active changed
 #define EV_RESIZE     (1u << 1) // size and/or scale of screen changed
@@ -31,6 +33,15 @@ typedef u32 Events;
 #define NANOSECOND  1ull
 
 #define GAMEPAD_COUNT 4u
+#define ARENA_ALIGN   _Alignof(__typeof__(pes.arena._align))
+
+#define FONT_UI_S ((Font){ .size = 11, .weight = 400 })
+#define FONT_UI_M ((Font){ .size = 13, .weight = 430 })
+#define FONT_UI_L ((Font){ .size = 16, .weight = 480 })
+
+#define FONT_MONO_S ((Font){ .family = FontFamily_MONOSPACE, .size = 11, .weight = 400 })
+#define FONT_MONO_M ((Font){ .family = FontFamily_MONOSPACE, .size = 13, .weight = 420 })
+#define FONT_MONO_L ((Font){ .family = FontFamily_MONOSPACE, .size = 16, .weight = 460 })
 
 typedef enum GamepadButton {
     GamepadButton_A = PBSysGamepadButton_A,
@@ -248,6 +259,7 @@ typedef enum Cursor {
 } Cursor;
 
 typedef PBSysWindowRendererShapeItem* Shape;
+typedef PBSysWindowRendererTextItem*  Text;
 typedef PBTexture                     Texture;
 typedef u32                           Ent;
 
@@ -294,7 +306,7 @@ typedef struct {
     SimdF32x2 o;
 } Transform;
 
-typedef char* Str; // AStrHeader at ptr-4
+typedef char* Str; // StrHeader at ptr-4
 
 typedef struct {
     u64* use_bm;            // bitmap of allocated ids
@@ -303,15 +315,12 @@ typedef struct {
     u32  max_id;
 } IdPool;
 
+typedef enum PB_ENUM_TYPE(u8) { FontFamily_SANS_SERIF, FontFamily_MONOSPACE } FontFamily;
 typedef struct {
-    u32 deviceId;      // device identifier, stable across reconnects
-    u16 held;          // buttons currently pressed (GamepadButton)
-    u16 pressed;       // buttons pressed at least once since last pes_event call (GamepadButton)
-    u16 have_button;   // GamepadButton bit is set if button is available
-    u8  have_axis;     // GamepadAxis bit is set if axis is available
-    u8  have_haptics;  // GamepadHaptics bit is set if haptics is available at locality bit
-    f32 axis_value[8]; // current value (GamepadAxis)
-} Gamepad;
+    FontFamily family;
+    u16        weight;
+    f32        size;
+} Font;
 
 struct PES {
     PBTime time;       // current time (monotonic clock, nanoseconds)
@@ -414,12 +423,16 @@ Shape        draw_shape(f32 x, f32 y, f32 w, f32 h);
 Shape        draw_shape_uv(f32 x, f32 y, f32 w, f32 h, Edges uv);
 Texture      draw_set_texture(Texture tex); // NoTexture to clear, returns prev texture
 Shape        draw_texture(f32 x, f32 y, f32 w, f32 h, Texture tex); // with uv {0,0,1,1}
+static Text  draw_text(Rect frame, Font font, Color color, const char* s);
+Text         draw_textf(Rect frame, Font font, Color color, const char* fmt, ...) FMT_ATTR(4, 5);
+Text         draw_textx(Rect frame, Font font, Color color, const char* s, u32 s_len, i64 s_key);
 Shape        draw_circle(Vec2 center_pos, f32 radius);
 static Shape draw_rect(Rect r);
 static Shape draw_filled_rect(Rect r, Color fill_color);
 static Shape draw_stroked_rect(Rect r, Color stroke_color, f32 thickness);
-void         draw_push(void);
-void         draw_pop(void);
+void         draw_clear(void); // discard anything that has been drawn
+void         draw_push(void);  // save transformation state
+void         draw_pop(void);   // restore transformation state
 Transform    draw_get_transform(void);
 Transform    draw_transform(Transform next); // replace transform, returns previous value
 void         draw_translate(f32 x, f32 y);
@@ -443,6 +456,14 @@ Edges   texture_uv_of_rect(f32 tex_width, f32 tex_height, Rect r);
 
 static void pixels_clear(Color* pixels, u32 w, u32 h, Color color);
 
+static Vec2 text_origin(const Text text); // top-left origin in dp
+static Vec2 text_size(const Text text);   // bounding-box size in dp
+static Rect text_bounds(const Text text);
+static void text_fill(Text text, Color color);
+void        text_set_origin(Text text, Vec2 origin);
+void        text_set_size(Text text, Vec2 size);
+void        text_set_bounds(Text text, Rect bounds);
+
 static Vec2 vec2(f32 x, f32 y);
 static Vec3 vec3(f32 x, f32 y, f32 z);
 static Vec4 vec4(f32 x, f32 y, f32 z, f32 w);
@@ -460,9 +481,10 @@ static Transform transform_rotate(Transform transform, f32 radians);
 static Edges edges_flip_x(Edges e);
 static Edges edges_flip_y(Edges e);
 
-void* arena_alloc(usize nbyte);
-void* arena_allocz(usize nbyte);
-void  arena_free(void* ptr, usize nbyte);
+void*        arena_alloc(usize nbyte);
+void*        arena_allocz(usize nbyte);
+void         arena_free(void* ptr, usize nbyte);
+static usize arena_avail(void);
 #define arena_alloc_obj(T)          ((T*)arena_allocz(sizeof(T)))
 #define arena_alloc_array(T, count) ((T*)arena_allocz(sizeof(T) * (count)))
 
@@ -504,6 +526,11 @@ static Color color_with_a(Color color, u8 a);
 static f32 px_of_dp(f32 dp_value);
 static f32 dp_of_px(f32 px_value);
 
+Str         str_fmt(const char* fmt, ...); // allocated in pes.arena; valid until next pes_poll
+Str         str_fmtv(const char* fmt, va_list args);
+static u32  str_len(Str s);
+static void str_free(Str); // best effort
+
 Ent         ent_create(const char* debug_name);
 void        ent_del(Ent ent);
 StrSlice    ent_debug_name_slice(Ent ent);
@@ -533,12 +560,7 @@ void memset_u32(u32* p, u32 value, u32 count); // p[0..count-1] = value
 #define assertf PBDebugExpectf
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
-// impl
-
-typedef struct {
-    u32  len;
-    char chars[];
-} StrHeader;
+// implementation
 
 #define array_assign(usize_index, Array_array)                                   \
     ({                                                                           \
@@ -562,8 +584,31 @@ inline static Ent _ent_assert_valid(Ent ent, const char* func, const char* file,
     #define ent_assert_valid(Ent_ent) (Ent_ent)
 #endif
 
-////////////////////////////////////////////////////////////////////////////////////////////////////
-// implementation
+////
+
+inline static usize arena_avail(void) {
+    usize cap = sizeof(pes.arena.bytes);
+    return cap - pes.arena.used;
+}
+
+////
+
+typedef struct {
+    u32  len;
+    char chars[];
+} StrHeader;
+
+inline static void str_free(Str s) {
+    StrHeader* h = (StrHeader*)(s - 4);
+    arena_free(h, h->len + 4);
+}
+
+inline static u32 str_len(Str s) {
+    StrHeader* h = (StrHeader*)(s - 4);
+    return h->len;
+}
+
+////
 
 inline static bool bit_get(const void* bits, usize bit) {
     return !!(((u8*)bits)[bit / 8] & ((u8)1 << (bit % 8)));
@@ -783,9 +828,50 @@ inline static Color color_with_a(Color color, u8 a) {
     return color;
 }
 
+////
+
 inline static void pixels_clear(Color* pixels, u32 w, u32 h, Color color) {
     memset_u32((u32*)pixels, color_abgr32(color), w * h);
 }
+
+///
+
+inline static Vec2 text_origin(const Text text) {
+    return (Vec2){ text->bounds.x / pes.screen.scale, text->bounds.y / pes.screen.scale };
+}
+
+inline static Vec2 text_size(const Text text) {
+    return (Vec2){
+        dp_of_px(text->bounds.z - text->bounds.x),
+        dp_of_px(text->bounds.w - text->bounds.y),
+    };
+}
+
+inline static Rect text_bounds(const Text text) {
+    return (Rect){ text_origin(text), text_size(text) };
+}
+
+inline static void text_fill(Text text, Color color) {
+    text->overrideColor = color_argb16(color);
+}
+
+////
+
+// __builtin_constant_p(s) is true for string literals; use its address as verbatim key.
+inline static Text draw_text(Rect r, Font f, Color c, const char* s); // silence warning
+#define draw_text(frame, font, color, s)                                               \
+    ({                                                                                 \
+        const char* PB_TMPID(s__) = (s);                                               \
+        __builtin_constant_p(s)                                                        \
+            ? draw_textx((frame), (font), (color), (s), strlen(s), -(i64)(uintptr)(s)) \
+            : draw_textx(                                                              \
+                  (frame),                                                             \
+                  (font),                                                              \
+                  (color),                                                             \
+                  PB_TMPID(s__),                                                       \
+                  strlen(PB_TMPID(s__)),                                               \
+                  (i64)(uintptr)PB_TMPID(s__));                                        \
+    })
 
 ////
 

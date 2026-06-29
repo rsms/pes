@@ -37,13 +37,34 @@ void add_ball(void) {
 
 void main(void) {
     pes_init("Bouncing Balls", 0, 0, rgb(40, 43, 48));
+
     f32 dt;
     while (pes_poll(&dt)) {
+        if UNLIKELY (ball_count == 0) {
+            Text text = draw_text(
+                rect(0, 0, pes.screen.width - 40.0f, 0),
+                FONT_UI_L,
+                rgb(140, 150, 160),
+                "SPACE or X to spawn ball\n"
+                "DEL to remove");
+            // center on screen
+            Vec2 size = text_size(text);
+            text_set_origin(
+                text,
+                (Vec2){ (pes.screen.width - size.x) * 0.5f, (pes.screen.height - size.y) * 0.5f });
+        }
+
         if (pes.events & EV_INPUT) {
-            if (gamepad_button_pressed(0, GamepadButton_A) || key_pressed(Key_Space))
+            if (gamepad_button_pressed(0, GamepadButton_A) || key_pressed(Key_Space)
+                || key_pressed(Key_X))
+            {
                 add_ball();
-            if (gamepad_button_pressed(0, GamepadButton_B))
+            }
+            if (gamepad_button_pressed(0, GamepadButton_B) || key_pressed(Key_Backspace)
+                || key_pressed(Key_Delete))
+            {
                 remove_ball();
+            }
         }
 
         for (int i = 0; i < ball_count; i++) {
